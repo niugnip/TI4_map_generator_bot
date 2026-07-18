@@ -3,11 +3,14 @@ package ti4.helpers;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import lombok.experimental.UtilityClass;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import ti4.logging.BotLogger;
+import ti4.service.bothelper.KeepThreadAliveService;
 import ti4.settings.GlobalSettings;
 
 @UtilityClass
@@ -53,9 +56,14 @@ public class ThreadArchiveHelper {
     }
 
     private static void archiveOldThreads(String guildName, List<ThreadChannel> threads, int numberToClose) {
+        Set<String> keptAliveThreadIds = KeepThreadAliveService.getAll().stream()
+                .map(KeepThreadAliveService.KeptThread::threadId)
+                .collect(Collectors.toSet());
+
         // Sort by archive priority, then by latest message ID (oldest first)
         List<ThreadChannel> targets = threads.stream()
                 .filter(c -> !c.isArchived())
+                .filter(c -> !keptAliveThreadIds.contains(c.getId()))
                 .sorted(Comparator.comparingInt(ThreadArchiveHelper::getArchivePriority)
                         .thenComparingLong(ThreadArchiveHelper::getSafeLatestMessageId))
                 .limit(numberToClose)
