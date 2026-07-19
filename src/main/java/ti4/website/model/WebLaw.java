@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.Data;
 import ti4.game.Game;
+import ti4.game.Player;
+import ti4.helpers.FoWHelper;
 import ti4.image.Mapper;
 import ti4.model.AgendaModel;
 
@@ -32,6 +34,24 @@ public class WebLaw {
     // Additional metadata
     private boolean displaysElectedFaction;
 
+    /**
+     * Blanks out which faction was elected by a law for players the viewer can't identify
+     * (FoWHelper#canSeeStatsOfPlayer) - mirrors how scored-objective progress is hidden: fully
+     * visible once identified, blank until then, rather than partially revealed like unit color.
+     */
+    public static void redactElectedFaction(List<WebLaw> lawsInPlay, Game game, Player viewer) {
+        for (WebLaw law : lawsInPlay) {
+            if (!"player".equals(law.electedType) || law.electedFaction == null) {
+                continue;
+            }
+            Player electedPlayer = game.getPlayerFromColorOrFaction(law.electedFaction);
+            if (electedPlayer != null && !FoWHelper.canSeeStatsOfPlayer(game, electedPlayer, viewer)) {
+                law.electedFaction = null;
+                law.electedInfo = null;
+            }
+        }
+    }
+
     public static WebLaw fromGameLaw(String lawId, Integer uniqueId, Game game) {
         WebLaw webLaw = new WebLaw();
 
@@ -56,10 +76,13 @@ public class WebLaw {
         webLaw.electedInfo = electedInfo;
 
         if (electedInfo != null && !electedInfo.isEmpty()) {
-            // Check if it's a player faction
-            if (Mapper.isValidFaction(electedInfo)) {
+            // Check if it's a player - elections are recorded as either the faction or the
+            // color (see IsPlayerElectedService, which checks both), so resolve via
+            // getPlayerFromColorOrFaction rather than only matching a faction string.
+            Player electedPlayer = game.getPlayerFromColorOrFaction(electedInfo);
+            if (electedPlayer != null) {
                 webLaw.electedType = "player";
-                webLaw.electedFaction = electedInfo;
+                webLaw.electedFaction = electedPlayer.getFaction();
             }
             // Check if it's a planet
             else if (Mapper.isValidPlanet(electedInfo)) {
