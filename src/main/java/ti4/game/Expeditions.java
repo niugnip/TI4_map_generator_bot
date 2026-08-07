@@ -25,6 +25,7 @@ import ti4.service.emoji.CardEmojis;
 import ti4.service.emoji.MiscEmojis;
 import ti4.service.emoji.TI4Emoji;
 import ti4.service.emoji.TechEmojis;
+import ti4.service.fow.GMService;
 
 @Data
 public class Expeditions {
@@ -145,6 +146,37 @@ public class Expeditions {
         };
     }
 
+    private static String getExpeditionName(String expeditionID) {
+        return switch (expeditionID) {
+            case "techSkip" -> "technology specialty";
+            case "tradeGoods" -> "3 trade goods";
+            case "fiveRes" -> "5 resources";
+            case "fiveInf" -> "5 influence";
+            case "secret" -> "secret objective";
+            case "actionCards" -> "2 action cards";
+            default -> expeditionID;
+        };
+    }
+
+    /**
+     * Tell the rest of the table an expedition was taken. Fog of War only - without fog the completion message already
+     * lands in the main game channel, where everybody can see it.
+     */
+    private static void announceExpeditionCompletion(Game game, Player player, String expeditionID) {
+        if (!game.isFowMode()) return;
+
+        String detail = " completed the **" + getExpeditionName(expeditionID) + "** expedition ("
+                + game.getExpeditions().getRemainingExpeditionCount() + " remaining).";
+        for (Player viewer : game.getRealPlayers()) {
+            if (viewer == player || "null".equals(viewer.getColor())) continue;
+            String who = FoWHelper.canSeeStatsOfPlayer(game, player, viewer)
+                    ? player.getRepresentation(false, false)
+                    : "Someone";
+            MessageHelper.sendPrivateMessageToPlayer(viewer, game, "### " + who + detail);
+        }
+        GMService.logPlayerActivity(game, player, player.getRepresentationUnfoggedNoPing() + detail);
+    }
+
     private String getExpeditionMessage(String expeditionID) {
         return switch (expeditionID) {
             case "techSkip" -> "Exhaust 1 technology specialty planet";
@@ -181,9 +213,13 @@ public class Expeditions {
 
     public static void setExpedition(Game game, String expedition, String faction) {
         Expeditions exp = game.getExpeditions();
-        exp.expeditionFactions.put(expedition, faction);
+        String previous = exp.expeditionFactions.put(expedition, faction);
         Player player = game.getPlayerFromColorOrFaction(faction);
         if (player != null && player.isRealPlayer()) {
+            // don't re-announce when a GM is correcting an expedition that was already taken
+            if (previous == null) {
+                announceExpeditionCompletion(game, player, expedition);
+            }
             if (exp.getRemainingExpeditionCount() == 0) {
                 String message = !game.isFowMode() ? "# ATTENTION " + game.getPing() + "\n" : "";
                 message += player.getRepresentation()
@@ -208,14 +244,14 @@ public class Expeditions {
         MessageChannel channel = player.getCorrectChannel();
         String output;
         boolean success = false;
-        String whichExp = "### " + player.getRepresentation() + " completed the **%s** expedition!";
+        String whichExp = "### " + player.getRepresentation() + " completed the **" + getExpeditionName(expeditionType)
+                + "** expedition!";
         switch (expeditionType) {
             case "techSkip" -> {
                 success = true;
                 List<Button> buttons = ButtonHelper.getExhaustButtonsWithTG(game, player, "skips");
                 buttons.add(Buttons.red("deleteButtons_spitItOut", "Done Exhausting Planets"));
-                MessageHelper.sendMessageToChannel(
-                        player.getCorrectChannel(), String.format(whichExp, "technology specialty"));
+                MessageHelper.sendMessageToChannel(player.getCorrectChannel(), whichExp);
                 MessageHelper.sendMessageToChannelWithButtons(
                         player.getCorrectChannel(),
                         "Please choose the planet with a technology specialty that you wish to exhaust.",
@@ -224,7 +260,7 @@ public class Expeditions {
             case "tradeGoods" -> {
                 success = true;
                 int oldTg = player.getTg();
-                MessageHelper.sendMessageToChannel(channel, String.format(whichExp, "3 trade goods"));
+                MessageHelper.sendMessageToChannel(channel, whichExp);
                 List<Button> buttons = null;
                 if (oldTg < 3) {
                     output =
@@ -242,7 +278,7 @@ public class Expeditions {
                 success = true;
                 List<Button> buttons = ButtonHelper.getExhaustButtonsWithTG(game, player, "res");
                 buttons.add(Buttons.red("deleteButtons_spitItOut", "Done Exhausting Planets"));
-                MessageHelper.sendMessageToChannel(channel, String.format(whichExp, "5 resources"));
+                MessageHelper.sendMessageToChannel(channel, whichExp);
                 MessageHelper.sendMessageToChannelWithButtons(
                         channel, "Use these buttons to spend 5 resources.", buttons);
             }
@@ -250,13 +286,13 @@ public class Expeditions {
                 success = true;
                 List<Button> buttons = ButtonHelper.getExhaustButtonsWithTG(game, player, "inf");
                 buttons.add(Buttons.red("deleteButtons_spitItOut", "Done Exhausting Planets"));
-                MessageHelper.sendMessageToChannel(channel, String.format(whichExp, "5 influence"));
+                MessageHelper.sendMessageToChannel(channel, whichExp);
                 MessageHelper.sendMessageToChannelWithButtons(
                         channel, "Use these buttons to spend 5 influence.", buttons);
             }
             case "secret" -> {
                 success = true;
-                output = String.format(whichExp, "secret objective");
+                output = whichExp;
                 List<Button> soButtons = SecretObjectiveHelper.getUnscoredSecretObjectiveDiscardButtons(player);
                 if (!soButtons.isEmpty()) {
                     output += "\n-# Use the buttons below to discard an unscored secret objective.";
@@ -271,7 +307,7 @@ public class Expeditions {
             }
             case "actionCards" -> {
                 success = true;
-                output = String.format(whichExp, "2 action cards");
+                output = whichExp;
                 List<Button> acButtons = ActionCardHelper.getDiscardActionCardButtons(player, false);
                 if (acButtons.size() >= 2) {
                     output += "\n-# Use the buttons in your private channel to discard 2 action cards.";
@@ -290,6 +326,7 @@ public class Expeditions {
         // The player clicked the button and succeeded
         if (success) {
             exp.expeditionFactions.put(expeditionType, player.getFaction());
+            announceExpeditionCompletion(game, player, expeditionType);
             if (exp.getRemainingExpeditionCount() == 0) {
                 String message = !game.isFowMode() ? "# ATTENTION " + game.getPing() + "\n" : "";
                 message += player.getRepresentation()

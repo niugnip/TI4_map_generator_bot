@@ -386,7 +386,10 @@ public class MapGenerator implements AutoCloseable {
     }
 
     public boolean shouldConvertToGeneric(Player player) {
-        return isFoWPrivate && !FoWHelper.canSeeStatsOfPlayer(game, player, fowPlayer);
+        if (!isFoWPrivate) return false;
+        // canSeeStatsOfPlayer dereferences both players; anonymize rather than throw when either is missing
+        if (player == null || fowPlayer == null) return true;
+        return !FoWHelper.canSeeStatsOfPlayer(game, player, fowPlayer);
     }
 
     private void logDebug() {
@@ -908,30 +911,18 @@ public class MapGenerator implements AutoCloseable {
                 || game.isTwilightsFallMode()) return;
 
         drawGeneralImage(x, y, "Expeditions.png");
-        if (exp.getTradeGoods() != null) {
-            Player p = game.getPlayerFromColorOrFaction(exp.getTradeGoods());
-            DrawingUtil.getAndDrawControlToken(graphics, p, x + 47, y + 101, isFoWPrivate, 1.0f);
-        }
-        if (exp.getFiveRes() != null) {
-            Player p = game.getPlayerFromColorOrFaction(exp.getFiveRes());
-            DrawingUtil.getAndDrawControlToken(graphics, p, x + 114, y + 5, isFoWPrivate, 1.0f);
-        }
-        if (exp.getActionCards() != null) {
-            Player p = game.getPlayerFromColorOrFaction(exp.getActionCards());
-            DrawingUtil.getAndDrawControlToken(graphics, p, x + 182, y + 101, isFoWPrivate, 1.0f);
-        }
-        if (exp.getTechSkip() != null) {
-            Player p = game.getPlayerFromColorOrFaction(exp.getTechSkip());
-            DrawingUtil.getAndDrawControlToken(graphics, p, x + 47, y + 150, isFoWPrivate, 1.0f);
-        }
-        if (exp.getSecret() != null) {
-            Player p = game.getPlayerFromColorOrFaction(exp.getSecret());
-            DrawingUtil.getAndDrawControlToken(graphics, p, x + 114, y + 243, isFoWPrivate, 1.0f);
-        }
-        if (exp.getFiveInf() != null) {
-            Player p = game.getPlayerFromColorOrFaction(exp.getFiveInf());
-            DrawingUtil.getAndDrawControlToken(graphics, p, x + 182, y + 150, isFoWPrivate, 1.0f);
-        }
+        drawExpeditionToken(exp.getTradeGoods(), x + 47, y + 101);
+        drawExpeditionToken(exp.getFiveRes(), x + 114, y + 5);
+        drawExpeditionToken(exp.getActionCards(), x + 182, y + 101);
+        drawExpeditionToken(exp.getTechSkip(), x + 47, y + 150);
+        drawExpeditionToken(exp.getSecret(), x + 114, y + 243);
+        drawExpeditionToken(exp.getFiveInf(), x + 182, y + 150);
+    }
+
+    private void drawExpeditionToken(String faction, int x, int y) {
+        if (faction == null) return;
+        Player p = game.getPlayerFromColorOrFaction(faction);
+        DrawingUtil.getAndDrawControlToken(graphics, p, x, y, shouldConvertToGeneric(p), 1.0f);
     }
 
     private int drawCardDecks(int x, int y) {
