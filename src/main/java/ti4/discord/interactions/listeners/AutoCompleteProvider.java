@@ -34,6 +34,7 @@ import ti4.game.Game;
 import ti4.game.Player;
 import ti4.game.persistence.GameManager;
 import ti4.game.persistence.ManagedGame;
+import ti4.helpers.ActionCardHelper;
 import ti4.helpers.Constants;
 import ti4.helpers.FoWHelper;
 import ti4.helpers.Helper;
@@ -182,16 +183,15 @@ class AutoCompleteProvider {
                 Map<String, String> values = new HashMap<>() {
                     {
                         put("RED", "Reds");
-                        put("GRAY", "Grays");
-                        // put("GRAY", "Greys");// TODO duplicate keys
-                        // put("GRAY", "Blacks");
                         put("ORANGE", "Oranges");
-                        // put("ORANGE", "Browns");
+                        put("BROWN", "Browns");
                         put("YELLOW", "Yellows");
                         put("GREEN", "Greens");
                         put("BLUE", "Blues");
                         put("PURPLE", "Purples");
                         put("PINK", "Pinks");
+                        put("WHITE", "Whites");
+                        put("BLACK", "Blacks");
                         put("MULTI", "Multi-Colours");
                         put(Constants.ALL, "ALL COLOURS");
                     }
@@ -456,7 +456,11 @@ class AutoCompleteProvider {
             }
             case Constants.SCENARIO -> {
                 String enteredValue = event.getFocusedOption().getValue();
-                var tokens = List.of("ordinian (codex 1)", "liberation (codex 4)");
+                var tokens = List.of(
+                        "ordinian (codex 1)",
+                        "liberation (codex 4)",
+                        "erwan's gambit (homebrew)",
+                        "muaat mania (homebrew)");
                 List<Command.Choice> options = mapTo25ChoicesThatContain(tokens, enteredValue);
                 event.replyChoices(options).queue(Consumers.nop(), BotLogger::catchRestError);
             }
@@ -684,6 +688,15 @@ class AutoCompleteProvider {
             case Constants.DRAFT_MODE -> {
                 String enteredValue = event.getFocusedOption().getValue();
                 List<FrankenDraftMode> modes = new ArrayList<>(Arrays.asList(FrankenDraftMode.values()));
+                // Outside FoW, Inaugural Splice is only ever triggered automatically after the Twilight's Fall
+                // milty/nucleus draft (ButtonHelperTwilightsFall.startInauguralSplice) - picking it as an
+                // opening draft would deal a bag with no factions/tiles/home systems. FoW doesn't offer
+                // milty/nucleus at all, so there the splice is a legitimate standalone choice.
+                boolean fowGame = GameManager.isValid(gameName)
+                        && GameManager.getManagedGame(gameName).getGame().isFowMode();
+                if (!fowGame) {
+                    modes.remove(FrankenDraftMode.INAUGURALSPLICE);
+                }
                 List<Command.Choice> options = modes.stream()
                         .filter(mode -> mode.search(enteredValue))
                         .limit(25)
@@ -1343,8 +1356,11 @@ class AutoCompleteProvider {
             case Constants.PICK_AC_FROM_DISCARD, Constants.SHUFFLE_AC_BACK_INTO_DECK -> {
                 String enteredValue = event.getFocusedOption().getValue().toLowerCase();
                 Game game = GameManager.getManagedGame(gameName).getGame();
+                Player viewer = game.getPlayer(event.getUser().getId());
+                boolean hideUnplayed = ActionCardHelper.hidesUnplayedDiscards(game, viewer);
                 Map<String, Integer> discardActionCardIDs = game.getDiscardActionCards();
                 List<Command.Choice> options = discardActionCardIDs.entrySet().stream()
+                        .filter(entry -> ActionCardHelper.isDiscardVisible(game, hideUnplayed, entry.getKey()))
                         .map(entry -> Map.entry(Mapper.getActionCard(entry.getKey()), entry.getValue()))
                         .filter(entry -> entry.getKey().getName().toLowerCase().contains(enteredValue))
                         .limit(25)
@@ -1475,6 +1491,9 @@ class AutoCompleteProvider {
                         List<Command.Choice> options = Mapper.getTechs().values().stream()
                                 .filter(entry -> entry.getFaction().isPresent())
                                 .filter(entry -> entry.search(enteredValue))
+                                .filter(model -> model.getSource() != ComponentSource.miltymod
+                                        && model.getSource() != ComponentSource.project_pi
+                                        && model.getSource() != ComponentSource.asteroid)
                                 .limit(25)
                                 .map(entry -> new Command.Choice(entry.getAutoCompleteName(), entry.getAlias()))
                                 .collect(Collectors.toList());

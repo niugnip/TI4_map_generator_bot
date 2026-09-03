@@ -14,6 +14,10 @@ import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
+import ti4.discord.interactions.buttons.handlers.explore.theodisi.LostLegciesExploreHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersAbilitiesHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersBreakthroughHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaUnitsHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Revenant.RevenantLeadersHandler;
@@ -28,6 +32,7 @@ import ti4.helpers.ButtonHelperAbilities;
 import ti4.helpers.ButtonHelperAgents;
 import ti4.helpers.ButtonHelperTacticalAction;
 import ti4.helpers.FoWHelper;
+import ti4.helpers.Helper;
 import ti4.helpers.RegexHelper;
 import ti4.helpers.thundersedge.TeHelperGeneral;
 import ti4.logging.BotLogger;
@@ -62,12 +67,14 @@ public class EndTurnService {
     }
 
     public static void endTurnAndUpdateMap(GenericInteractionCreateEvent event, Game game, Player player) {
+        if (NetrunnersBreakthroughHandler.offerDataBreachTechnology(game, player)) return;
         if (StringUtils.isNotEmpty(game.getCurrentActiveSystem())
                 && game.getStoredValue(ButtonHelperTacticalAction.TACTICAL_ACTION_LOGGED)
                         .isEmpty()) {
             ButtonHelperTacticalAction.logTacticalAction(game, player);
         }
         game.removeStoredValue(ButtonHelperTacticalAction.TACTICAL_ACTION_LOGGED);
+        LostLegciesExploreHandler.resolveBattleworldEndOfTurn(event, game, player);
         for (Tile tile : game.getTileMap().values()) {
             TeHelperGeneral.addStationsToPlayArea(event, game, tile);
         }
@@ -88,6 +95,7 @@ public class EndTurnService {
     }
 
     private static void resetStoredValuesEndOfTurn(Game game, Player player) {
+        AeternaAbilityHandler.clearCycleOfReclamationActionCaptures(game);
         AeternaLeadersHandler.clearAeternaCommanderActionState(game);
         AeternaUnitsHandler.clearCryptActionState(game);
         AeternaUnitsHandler.clearGraveyardActionState(game);
@@ -104,7 +112,9 @@ public class EndTurnService {
         TeHelperGeneral.checkCoexistTransfer(game);
         game.removeStoredValue("mahactHeroTarget");
         game.removeStoredValue("possiblyUsedRift");
+        game.removeStoredValue("safeHarborUsed");
         game.removeStoredValue("heartWarnedThisTurn");
+        game.removeStoredValue(LostLegciesExploreHandler.IMMEDIATE_ASSEMBLY_PRODUCTION + player.getFaction());
         String fieldTestTech = game.getStoredValue("fieldTestTech" + player.getFaction());
         if (!fieldTestTech.isEmpty()) {
             player.removeTech(fieldTestTech);
@@ -113,6 +123,14 @@ public class EndTurnService {
                     player.getCorrectChannel(),
                     player.getRepresentationNoPing()
                             + " lost temporary access to their _Field Test_ technology at the end of their turn.");
+        }
+        String proxyTech = game.getStoredValue("netrunnersProxyTech" + player.getFaction());
+        if (!proxyTech.isEmpty()) {
+            NetrunnersAbilitiesHandler.clearProxyNetwork(game, player);
+            MessageHelper.sendMessageToChannel(
+                    player.getCorrectChannel(),
+                    player.getRepresentationNoPing()
+                            + " lost temporary access to their **Proxy Network** copied technology.");
         }
         game.setActiveSystem("");
     }
@@ -187,6 +205,23 @@ public class EndTurnService {
                 Leader hero =
                         ralnel == null ? null : ralnel.getLeader("ralnelhero").orElse(null);
                 if (hero != null) PlayHeroService.playHero(event, game, ralnel, hero);
+            }
+        }
+        if (game.getRealPlayers().stream().allMatch(Player::isPassed) && game.isMuaatManiaMode()) {
+            for (Player player : game.getRealPlayers()) {
+                if (player.getPlanets().contains("styx")) {
+                    if (game.getStoredValue("styxHolderMM").contains(player.getFaction())) {
+                        Integer poIndex = game.addCustomPO("Styx Win", 20);
+                        game.scorePublicObjective(player.getUserID(), poIndex);
+                        MessageHelper.sendMessageToChannel(
+                                player.getCorrectChannel(),
+                                player.getRepresentation() + " won by holding styx for a round.");
+                        Helper.checkEndGame(game, mainPlayer);
+                        return;
+                    } else {
+                        game.setStoredValue("styxHolderMM", player.getFaction());
+                    }
+                }
             }
         }
 

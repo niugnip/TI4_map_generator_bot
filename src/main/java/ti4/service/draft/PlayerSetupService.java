@@ -40,6 +40,7 @@ import ti4.model.Source;
 import ti4.model.TechnologyModel;
 import ti4.model.UnitModel;
 import ti4.service.emoji.MiscEmojis;
+import ti4.service.game.MonumentsService;
 import ti4.service.info.AbilityInfoService;
 import ti4.service.info.CardsInfoService;
 import ti4.service.info.LeaderInfoService;
@@ -47,6 +48,7 @@ import ti4.service.info.SecretObjectiveInfoService;
 import ti4.service.info.TechInfoService;
 import ti4.service.info.UnitInfoService;
 import ti4.service.leader.UnlockLeaderService;
+import ti4.service.map.FractureService;
 import ti4.service.planet.AddPlanetService;
 import ti4.service.planet.PlanetService;
 import ti4.service.player.PlayerColorService;
@@ -285,6 +287,7 @@ public class PlayerSetupService {
         // STARTING OWNED UNITS
         Set<String> playerOwnedUnits = new HashSet<>(factionModel.getUnits());
         player.setUnitsOwned(playerOwnedUnits);
+        MonumentsService.addFactionMonument(player, game);
         if (game.isBaseGameMode()) {
             UnitModel mech = player.getUnitByBaseType("mech");
             if (mech != null) {
@@ -497,6 +500,12 @@ public class PlayerSetupService {
                             + " you may peek at the next objective in your `#cards-info` thread (by your promissory note). "
                             + "This holds true for anyone with _Read the Fates_. Don't do this until after secret objectives are dealt and discarded.");
         }
+        if (player.hasAbility("phoenix_rising")) {
+            AddUnitService.addUnits(event, player.getNomboxTile(), game, player.getColor(), "12 infantry");
+            MessageHelper.sendMessageToChannel(
+                    player.getCorrectChannel(),
+                    player.getRepresentation() + " added 12 captured infantry to their faction sheet.");
+        }
         if (player.hasAbility("mechanized_military")) {
             String unitID = AliasHandler.resolveUnit("mech");
             player.setUnitCap(unitID, 6);
@@ -556,7 +565,7 @@ public class PlayerSetupService {
         if ("d11".equalsIgnoreCase(hsTile)) {
             AddTokenCommand.addToken(event, tile, Constants.FRONTIER, game);
         }
-        if ("true".equalsIgnoreCase(game.getStoredValue("removeSupports"))) {
+        if ("true".equalsIgnoreCase(game.getStoredValue("removeSupports")) || game.isMuaatManiaMode()) {
             player.removeOwnedPromissoryNoteByID(player.getColor() + "_sftt");
             player.removePromissoryNote(player.getColor() + "_sftt");
         }
@@ -587,6 +596,18 @@ public class PlayerSetupService {
                         player.getCorrectChannel(),
                         "You cannot do _Rapid Mobilization_ __yet__, but once the map is setup, you can use this button to do so.",
                         buttons);
+            }
+        }
+        if (isSpeaker && !FractureService.isFractureInPlay(game)) {
+            if (game.isRapidMobilizationMode() || game.isCosmicConvergenceMode()) {
+                FractureService.spawnFracture(event, game);
+                FractureService.spawnIngressTokens(event, game, player, "nah");
+            }
+        }
+        if (game.isMuaatManiaMode()) {
+            player.addOwnedUnitByID("mm_warsun");
+            if (player.getHomeSystemTile() != null) {
+                AddUnitService.addUnits(event, tile, game, color, "ws");
             }
         }
     }

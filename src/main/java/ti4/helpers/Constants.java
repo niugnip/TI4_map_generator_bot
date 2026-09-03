@@ -243,6 +243,7 @@ public final class Constants {
 
     public static final String TOKEN_INGRESS = "token_ingress.png";
     public static final String TOKEN_EGRESS = "token_egress.png";
+    public static final String TOKEN_FRACTURE = "token_fracture_async.png";
     public static final String TOKEN_BREACH_ACTIVE = "token_breachActive.png";
     public static final String TOKEN_BREACH_INACTIVE = "token_breachInactive.png";
     public static final String TOKEN_SEVERED = "token_severed.png";
@@ -458,6 +459,8 @@ public final class Constants {
     private static final String SKARNATH = "skarnath";
     private static final String LETHARA = "lethara";
     private static final String GYRAXIS = "gyraxis";
+    private static final String LOST_STATION = "loststation";
+    private static final String ILLUSTRION = "illustrion";
     public static final List<String> TOKEN_PLANETS = List.of(
             MIRAGE,
             OASIS,
@@ -468,6 +471,8 @@ public final class Constants {
             SKARNATH,
             LETHARA,
             GYRAXIS,
+            LOST_STATION,
+            ILLUSTRION,
             AVERNUS,
             THUNDERSEDGE,
             BROKENPLANET1,
@@ -508,6 +513,7 @@ public final class Constants {
     public static final String EXPEDITION_WIN_RATES = "expedition_win_rates";
     public static final String TWILIGHTS_FALL_SPLICE_WIN_RATES = "tf_splice_win_rates";
     public static final String SLICE_TILE_WIN_RATES = "slice_tile_win_rates";
+    public static final String PLANET_WIN_RATES = "planet_win_rates";
     public static final String SEND_DEBT = "send_debt";
     public static final String DEBT_COUNT = "debt_count";
     public static final String REMOVE_DEBT = "remove_debt";
@@ -783,6 +789,7 @@ public final class Constants {
     public static final String EXPLORATION_DECKS = "exploration_decks";
     public static final String AC_DISCARDED = "action_cards_discarded";
     public static final String AC_STATUS = "action_cards_status";
+    public static final String AC_PLAYED = "action_cards_played";
     public static final String AC_PURGED = "action_cards_purged";
     public static final String SO = "secret_objectives";
     public static final String PRODUCED_UNITS = "produced_units";
@@ -1031,6 +1038,7 @@ public final class Constants {
     public static final String SEND_FRAGMENT = "send_fragment";
     public static final String USE = "use";
     public static final String PURGE_FRAGMENTS = "purge_fragments";
+    public static final String SHOW_PURGED_FRAGMENTS = "show_purged_fragments";
     public static final String FRAGMENTS = "fragments";
     public static final String LIST_FRAGMENTS = "list_fragments";
     public static final String RELIC = "relic";
@@ -1118,7 +1126,6 @@ public final class Constants {
     public static final String ANON = "anon";
     public static final String ANNOUNCE = "announce";
     public static final String ENDED_GAMES = "ended_games";
-    public static final String WINNING_PATH = "winning_path";
     public static final String TEXT_SIZE = "text_size";
     public static final String FIX_CHANNEL_PERMISSIONS = "fix_channel_permissions";
     public static final String CATEGORY_CHANNEL_COUNT = "category_channel_count";
@@ -1345,7 +1352,10 @@ public final class Constants {
     public static final String CONVENTIONS_OF_WAR_ABANDONED_MODE = "conventions_of_war_abandoned_mode";
     public static final String RAPID_MOBILIZATION_MODE = "rapid_mobilization_mode";
     public static final String MONUMENTS_TO_THE_AGES_MODE = "monuments_to_the_ages_mode";
+    public static final String MONUMENTS_MODE = "monuments_mode";
     public static final String COSMIC_PHENOMENAE_MODE = "cosmic_phenomenae_mode";
+    public static final String COSMIC_CONVERGENCE_MODE = "cosmic_convergence_mode";
+    public static final String MUAAT_MANIA_MODE = "muaat_mania_mode";
     public static final String WEIRD_WORMHOLES_MODE = "weird_wormholes_mode";
     public static final String NO_FRACTURE = "no_fracture";
     public static final String CALL_OF_THE_VOID_MODE = "call_of_the_void_mode";
@@ -1360,6 +1370,7 @@ public final class Constants {
     public static final String WHISPERS_DISABLED = "whispers_disabled";
     public static final String ORDINIAN_C1_MODE = "ordinian_c1_mode";
     public static final String LIBERATION_C4_MODE = "liberation_c4_mode";
+    public static final String ERWANS_GAMBIT_MODE = "erwans_gambit_mode";
     public static final String FAKE_COMMANDERS = "fake_commanders";
     public static final String UPDATE_THREAD_ARCHIVE_TIME = "update_thread_archive_time";
     public static final String THREAD_SEARCH_STRING = "thread_search_string";

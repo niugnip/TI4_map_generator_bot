@@ -22,6 +22,7 @@ import ti4.helpers.Units.UnitType;
 import ti4.logging.BotLogger;
 import ti4.logging.LogOrigin;
 import ti4.message.MessageHelper;
+import ti4.service.agenda.MonumentsAgendaService;
 import ti4.service.planet.AddPlanetToPlayAreaService;
 
 @UtilityClass
@@ -198,7 +199,17 @@ public class RemoveUnitService {
         }
 
         if (toRemoveCount > 0 && event != null) {
-            MessageHelper.replyToMessage(event, "Did not find enough units to remove, " + toRemoveCount + " missing.");
+            MessageHelper.replyToMessage(
+                    event,
+                    "Did not find enough " + parsedUnit.unitKey().getColor() + " units to remove, " + toRemoveCount
+                            + " missing.");
+        }
+
+        for (RemovedUnit removedUnit : allUnitsRemoved) {
+            if (removedUnit.unitKey().unitType() == UnitType.Monument) {
+                MonumentsAgendaService.resolveCathedralOfIxthRemoval(
+                        game, removedUnit.getPlayer(game), removedUnit.uh().getName());
+            }
         }
 
         allUnitsRemoved.stream()

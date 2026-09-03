@@ -20,7 +20,6 @@ import net.dv8tion.jda.api.events.interaction.command.GenericCommandInteractionE
 import org.jetbrains.annotations.NotNull;
 import software.amazon.awssdk.utils.StringUtils;
 import ti4.discord.interactions.buttons.Buttons;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.DreamButtonHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Oblivion.OblivionUnitHandler;
 import ti4.game.Game;
 import ti4.game.Planet;
@@ -35,6 +34,7 @@ import ti4.image.PositionMapper;
 import ti4.logging.BotLogger;
 import ti4.message.MessageHelper;
 import ti4.model.BorderAnomalyHolder;
+import ti4.model.PromissoryNoteModel;
 import ti4.model.WormholeModel;
 import ti4.service.combat.StartCombatService;
 import ti4.service.fow.FOWPlusService;
@@ -212,12 +212,10 @@ public final class FoWHelper {
 
     /** Dispatch a {@link Buttons} factory by {@code style} ("gray" default, "green", "red", "blue"). */
     private static Button styledButton(String style, String buttonId, String label, String emoji) {
-        return switch (style == null ? "gray" : style) {
-            case "green" -> Buttons.green(buttonId, label, emoji);
-            case "red" -> Buttons.red(buttonId, label, emoji);
-            case "blue" -> Buttons.blue(buttonId, label, emoji);
-            default -> Buttons.gray(buttonId, label, emoji);
-        };
+        if ("green".equals(style)) return Buttons.green(buttonId, label, emoji);
+        if ("red".equals(style)) return Buttons.red(buttonId, label, emoji);
+        if ("blue".equals(style)) return Buttons.blue(buttonId, label, emoji);
+        return Buttons.gray(buttonId, label, emoji);
     }
 
     /**
@@ -292,9 +290,10 @@ public final class FoWHelper {
         if (viewingPlayer.getAllianceMembers().contains(player.getFaction())) {
             return true;
         }
-        if ((hasPlayersPromInPlayArea(player, viewingPlayer) || hasMahactCCInFleet(player, viewingPlayer))
-                && !FOWPlusService.isActive(game)
-                && !game.getFowOption(FOWOption.STATS_FROM_HS_ONLY)) {
+        if (!FOWPlusService.isActive(game)
+                && !game.getFowOption(FOWOption.STATS_FROM_HS_ONLY)
+                && (hasPlayersPromInPlayArea(game, player, viewingPlayer)
+                        || hasMahactCCInFleet(game, player, viewingPlayer))) {
             return true;
         }
         initializeFog(game, viewingPlayer, false);
@@ -377,6 +376,54 @@ public final class FoWHelper {
         return tilePositionsToShow;
     }
 
+    /**
+     * Whether this tile has ever been revealed to the player, per their persisted fog memory.
+     * <p>
+     * Deliberately keys on position only. It does <b>not</b> compare the remembered tileID against the tile
+     * currently at that position, because tiles get rewritten in place (FlipTileService turns 82a into 82b and
+     * similar), which would turn a legitimately remembered system into a false negative. This matches the
+     * existing precedent in {@link Tile#hasFog(Player)} for Light Fog mode.
+     */
+    public static boolean hasEverSeenTile(@NotNull Player player, String position) {
+        return position != null && player.getFogTiles().containsKey(position);
+    }
+
+    /**
+     * Positions the player can see right now, unioned with every position they have ever seen. Outside fog
+     * everything is known, so this returns the whole map.
+     */
+    public static Set<String> getKnownTilePositions(Game game, @NotNull Player player) {
+        if (!game.isFowMode()) {
+            return new HashSet<>(game.getTileMap().keySet());
+        }
+        Set<String> known = new HashSet<>(getTilePositionsToShow(game, player));
+        known.addAll(player.getFogTiles().keySet());
+        return known;
+    }
+
+    /** Whether the player could know that the system at this position exists. */
+    public static boolean knowsTile(Game game, @NotNull Player player, String position) {
+        if (!game.isFowMode()) return true;
+        return hasEverSeenTile(player, position)
+                || getTilePositionsToShow(game, player).contains(position);
+    }
+
+    /**
+     * Whether the player could know that this planet exists: either they can see (or have seen) the system it
+     * sits in, or they can see the stats of whoever controls it, which discloses that player's planets.
+     * <p>
+     * Callers building a whole list should prefer the batched path in {@code PlanetTargetService}, which
+     * computes the visible-position set once instead of once per planet.
+     */
+    public static boolean knowsPlanetExists(Game game, @NotNull Player player, String planetId) {
+        if (!game.isFowMode()) return true;
+        Tile tile = game.getTileFromPlanet(planetId);
+        if (tile == null) return false;
+        if (knowsTile(game, player, tile.getPosition())) return true;
+        Player owner = game.getPlayerThatControlsPlanet(planetId, true);
+        return owner != null && canSeeStatsOfPlayer(game, owner, player);
+    }
+
     public static void updateFog(Game game, Player player) {
         if (player != null) initializeFog(game, player, true);
     }
@@ -400,22 +447,34 @@ public final class FoWHelper {
         return tile != null && !tile.hasFog(viewingPlayer);
     }
 
-    private static boolean hasPlayersPromInPlayArea(@NotNull Player player, @NotNull Player viewingPlayer) {
-        boolean hasPromInPA = false;
-        Game game = player.getGame();
-        List<String> promissoriesInPlayArea = viewingPlayer.getPromissoryNotesInPlayArea();
-        for (String prom_ : promissoriesInPlayArea) {
-            if (game.getPNOwner(prom_) == player) {
-                hasPromInPA = true;
-                break;
+    private static boolean hasPlayersPromInPlayArea(
+            @NotNull Game game, @NotNull Player player, @NotNull Player viewingPlayer) {
+        for (String prom_ : viewingPlayer.getPromissoryNotesInPlayArea()) {
+            if (game.getPNOwner(prom_) != player) {
+                continue;
+            }
+            if (!game.getFowOption(revealGateFor(Mapper.getPromissoryNote(prom_)))) {
+                return true;
             }
         }
-        return hasPromInPA;
+        return false;
     }
 
-    private static boolean hasMahactCCInFleet(@NotNull Player player, @NotNull Player viewingPlayer) {
-        List<String> mahactCCs = viewingPlayer.getMahactCC();
-        return mahactCCs.contains(player.getColor());
+    private static FOWOption revealGateFor(PromissoryNoteModel pn) {
+        // Faction-specific homebrew replacements (e.g. Black Spectrum's per-faction Alliance/SftT
+        // cards) keep the alias of the card they replace here, so classify by that when present.
+        String classificationAlias = pn.getHomebrewReplacesID().orElse(pn.getAlias());
+        if (classificationAlias.endsWith("_an")) return FOWOption.HIDE_STATS_VIA_ALLIANCE;
+        if (classificationAlias.endsWith("_sftt")) return FOWOption.HIDE_STATS_VIA_SFTT;
+        return FOWOption.HIDE_STATS_VIA_FACTION_PN;
+    }
+
+    private static boolean hasMahactCCInFleet(
+            @NotNull Game game, @NotNull Player player, @NotNull Player viewingPlayer) {
+        if (game.getFowOption(FOWOption.HIDE_STATS_VIA_MAHACT_CC)) {
+            return false;
+        }
+        return viewingPlayer.getMahactCC().contains(player.getColor());
     }
 
     /**
@@ -468,10 +527,6 @@ public final class FoWHelper {
         Set<String> otherAdjacencies = getNonWormholeAdjacencies(game, position);
         adjacentPositions.addAll(otherAdjacencies);
 
-        // Nexus Token Adjacency for Dreaming Throne
-        if (player != null && player.hasAbility("dream_nexus")) {
-            adjacentPositions.addAll(DreamButtonHandler.getDreamNexusAdjacencies(game, player, position));
-        }
         if (player != null
                 && (game.playerHasLeaderUnlockedOrAlliance(player, "celdauricommander")
                         || player.hasTech("tf-starbasewebway"))
@@ -533,9 +588,9 @@ public final class FoWHelper {
         }
 
         Set<Feature> adjToFeatures = EnumSet.noneOf(Feature.class);
-        for (String alias : tile.getTileModel().getAliases()) {
-            if (alias.startsWith("egress")) adjToFeatures.add(Feature.ingress);
-        }
+        if (tile.hasEgress()) adjToFeatures.add(Feature.ingress);
+
+        if (tile.hasIngress()) adjToFeatures.add(Feature.egress);
 
         if (game.isCosmicPhenomenaeMode()) {
             if (tile.isScar(game)) {
@@ -566,8 +621,11 @@ public final class FoWHelper {
         }
 
         for (Tile t : allTiles) {
-            if (adjToFeatures.contains(Feature.egress)
-                    && t.getTileModel().getAliases().stream().anyMatch(x -> x.startsWith("egress"))) {
+            if (adjToFeatures.contains(Feature.egress) && t.hasEgress()) {
+                adjacentPositions.add(t.getPosition());
+                continue;
+            }
+            if (adjToFeatures.contains(Feature.ingress) && t.hasIngress()) {
                 adjacentPositions.add(t.getPosition());
                 continue;
             }

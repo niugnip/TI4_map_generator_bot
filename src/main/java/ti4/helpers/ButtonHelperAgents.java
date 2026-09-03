@@ -20,6 +20,7 @@ import ti4.ResourceHelper;
 import ti4.contest.replay.service.CombatReplayService;
 import ti4.discord.interactions.buttons.Buttons;
 import ti4.discord.interactions.buttons.handlers.faction.base.arborec.ArborecButtonHandlers;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Ardentia.ArdentiaLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Kryxos.KryxosLeadersHandler;
@@ -52,6 +53,8 @@ import ti4.service.emoji.SourceEmojis;
 import ti4.service.emoji.TechEmojis;
 import ti4.service.emoji.UnitEmojis;
 import ti4.service.explore.ExploreService;
+import ti4.service.fow.PlanetTargetService;
+import ti4.service.fow.PlanetTargetService.PlanetTargetSpec;
 import ti4.service.leader.CommanderUnlockCheckService;
 import ti4.service.leader.ExhaustLeaderService;
 import ti4.service.leader.RefreshLeaderService;
@@ -539,7 +542,7 @@ public final class ButtonHelperAgents {
                 ButtonHelper.deleteButtonAndDeleteMessageIfEmpty(event);
             }
         }
-        if (tileDestination != null && tileDestination.getPosition().startsWith("frac")) {
+        if (tileDestination != null && tileDestination.isFracture()) {
             CommanderUnlockCheckService.checkPlayer(player, "obsidian");
         }
         MessageHelper.sendMessageToChannel(event.getChannel(), message + ".");
@@ -1166,13 +1169,22 @@ public final class ButtonHelperAgents {
                 MessageHelper.sendMessageToChannel(channel, exhaustText);
 
                 List<Button> buttons = new ArrayList<>();
-                for (String planet : p2.getPlanets()) {
-                    if (game.getUnitHolderFromPlanet(planet) != null
-                            && !game.getUnitHolderFromPlanet(planet).isHomePlanet(game)
-                            && FoWHelper.playerHasUnitsOnPlanet(p2, game.getUnitHolderFromPlanet(planet))) {
-                        buttons.add(Buttons.gray(
-                                player.factionButtonChecker() + "exchangeProgramPart3_" + planet,
-                                Helper.getPlanetRepresentation(planet, game)));
+                if (game.isFowMode()) {
+                    buttons = PlanetTargetService.targetButtons(
+                            game,
+                            player,
+                            PlanetTargetSpec.of(player.factionButtonChecker() + "exchangeProgramPart3")
+                                    .where(p -> !p.isHomePlanet(game)),
+                            buttons);
+                } else {
+                    for (String planet : p2.getPlanets()) {
+                        if (game.getUnitHolderFromPlanet(planet) != null
+                                && !game.getUnitHolderFromPlanet(planet).isHomePlanet(game)
+                                && FoWHelper.playerHasUnitsOnPlanet(p2, game.getUnitHolderFromPlanet(planet))) {
+                            buttons.add(Buttons.gray(
+                                    player.factionButtonChecker() + "exchangeProgramPart3_" + planet,
+                                    Helper.getPlanetRepresentation(planet, game)));
+                        }
                     }
                 }
                 String msg = player.getRepresentation()
@@ -1592,6 +1604,14 @@ public final class ButtonHelperAgents {
                 return;
             }
             VeylorLeadersHandler.startVeylorAgent(game, target);
+        }
+        if ("taagent".equalsIgnoreCase(agent)) {
+            Player target = game.getPlayerFromColorOrFaction(rest.substring(rest.indexOf('_') + 1));
+            if (target == null) {
+                MessageHelper.sendMessageToChannel(channel, "Could not find the selected Ta Agent target.");
+                return;
+            }
+            TaLeadersHandler.resolveTaAgentTarget(game, target);
         }
 
         if (event instanceof ButtonInteractionEvent buttonEvent) {
@@ -2452,7 +2472,7 @@ public final class ButtonHelperAgents {
         }
         MessageHelper.sendMessageToChannel(player.getCorrectChannel(), msg);
         CommanderUnlockCheckService.checkPlayer(player, "titans", "saar", "rohdhna", "cheiran", "celdauri");
-        if (tile != null && tile.getPosition().startsWith("frac")) {
+        if (tile != null && tile.isFracture()) {
             CommanderUnlockCheckService.checkPlayer(player, "obsidian");
         }
         AgendaHelper.ministerOfIndustryCheck(player, game, game.getTileFromPlanet(planet), event);

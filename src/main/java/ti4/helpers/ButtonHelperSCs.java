@@ -16,6 +16,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.function.Consumers;
 import org.jetbrains.annotations.NotNull;
 import ti4.discord.interactions.buttons.Buttons;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.AdministrativeExemptionLLButtonHandler;
 import ti4.discord.interactions.buttons.handlers.commandcounter.CommandCounterButtonHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Ardentia.ArdentiaPromissoryHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Revenant.RevenantBreakthroughHandler;
@@ -227,6 +228,7 @@ public final class ButtonHelperSCs {
             List<Button> buttons2 = ButtonHelperAbilities.getXxchaPeaceAccordsButtons(
                     game, player, event, player.factionButtonChecker());
             if (!buttons2.isEmpty()) {
+                buttons2.add(Buttons.red("deleteButtons", "Decline"));
                 MessageHelper.sendMessageToChannelWithButtons(
                         player.getCorrectChannel(),
                         player.getRepresentationUnfogged() + ", please resolve **Peace Accords**.",
@@ -580,6 +582,7 @@ public final class ButtonHelperSCs {
                     p2.setTg(p2.getTg() + washedCommsPower);
                     p2.setCommodities(p2.getCommodities() - washedCommsPower);
                     ButtonHelperAbilities.pillageCheck(p2, game);
+                    ButtonHelperActionCards.lieInWaitCheck(player, p2, game);
                     MessageHelper.sendMessageToChannel(
                             p2.getCorrectChannel(),
                             p2.getRepresentationUnfogged() + ", " + washedCommsPower
@@ -589,6 +592,7 @@ public final class ButtonHelperSCs {
                     p2.setTg(p2.getTg() + p2.getCommodities());
                     p2.setCommodities(0);
                     ButtonHelperAbilities.pillageCheck(p2, game);
+                    ButtonHelperActionCards.lieInWaitCheck(player, p2, game);
                     MessageHelper.sendMessageToChannel(
                             p2.getCorrectChannel(),
                             p2.getRepresentationUnfogged()
@@ -975,7 +979,10 @@ public final class ButtonHelperSCs {
         StrategyCardModel scModel = null;
         for (int scNum : player.getUnfollowedSCs()) {
             if (game.getStrategyCardModelByInitiative(scNum).get().usesAutomationForSCID("pok4construction")
-                    || game.getStrategyCardModelByInitiative(scNum).get().usesAutomationForSCID("te4construction")) {
+                    || game.getStrategyCardModelByInitiative(scNum).get().usesAutomationForSCID("te4construction")
+                    || game.getStrategyCardModelByInitiative(scNum)
+                            .get()
+                            .usesAutomationForSCID("monuments4construction")) {
                 scModel = game.getStrategyCardModelByInitiative(scNum).get();
             }
         }
@@ -986,8 +993,9 @@ public final class ButtonHelperSCs {
             scModel = game.getStrategyCardModelByName("civitas").orElse(null);
         }
         int scNum = scModel.getInitiative();
-        boolean automationExists =
-                scModel.usesAutomationForSCID("pok4construction") || scModel.usesAutomationForSCID("te4construction");
+        boolean automationExists = scModel.usesAutomationForSCID("pok4construction")
+                || scModel.usesAutomationForSCID("te4construction")
+                || scModel.usesAutomationForSCID("monuments4construction");
         if (!used
                 && !player.getFollowedSCs().contains(scNum)
                 && automationExists
@@ -1043,14 +1051,26 @@ public final class ButtonHelperSCs {
                 }
                 MessageHelper.sendMessageToEventChannelWithEphemeralButtons(event, message, buttons);
             } else {
-
                 UnitKey unitKey = Mapper.getUnitKey(AliasHandler.resolveUnit(unit), player.getColorID());
+                if ("monument".equalsIgnoreCase(unit) && player.getUnitByBaseType("monument") == null) {
+                    MessageHelper.sendEphemeralMessageToEventChannel(event, "You do not have a Monument to place.");
+                    return;
+                }
+                if (unitKey == null) {
+                    MessageHelper.sendEphemeralMessageToEventChannel(event, "Unable to resolve that unit.");
+                    return;
+                }
                 String message = player.getRepresentationUnfogged() + ", please choose the planet you wish to put your "
                         + unitKey.unitName() + " on for **Construction**.";
                 if (!player.getSCs().contains(4) && !"te4construction".equals(scModel.getBotSCAutomationID())) {
                     message += "\n-# It will place a command token in the system as well.";
                 }
                 List<Button> buttons = Helper.getPlanetPlaceUnitButtons(player, game, unit, "place");
+                if (buttons.isEmpty()) {
+                    MessageHelper.sendEphemeralMessageToEventChannel(
+                            event, "You have no eligible planet on which to place that unit.");
+                    return;
+                }
                 MessageHelper.sendMessageToEventChannelWithEphemeralButtons(event, message, buttons);
             }
         }
@@ -1605,6 +1625,10 @@ public final class ButtonHelperSCs {
         String scName = "a strategy card";
         if (scNum != -1) scName = "**" + Helper.getSCName(scNum, game) + "**";
         String msgStart = " following to perform the secondary ability of " + scName + ".";
+
+        if (AdministrativeExemptionLLButtonHandler.useExemption(game, player)) {
+            return msgStart + " No command token was spent due to _Administrative Exemption_.";
+        }
 
         if (player.isElected("tk-endorse")) {
             return msgStart + " You are elected for _Endorse_, so you do not spend a token.";

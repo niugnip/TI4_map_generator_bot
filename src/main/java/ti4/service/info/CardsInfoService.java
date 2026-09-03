@@ -8,16 +8,13 @@ import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.DreamButtonHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.Iron.IronLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ashen.AshenLeadersHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.crystellum.CrystellumFactionTechHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.crystellum.CrystellumLeadersHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.dream.DreamLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.natau.NatauAbilityHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersAbilitiesHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaAbilityHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaUnitsHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Arcanum.ArcanumLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Kairn.KairnAbilityHandler;
@@ -30,6 +27,7 @@ import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Thron
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Thrones.ThronesUnitHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Verydith.VerydithLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Xytheris.XytherisAbilityHandler;
+import ti4.discord.interactions.buttons.handlers.relics.theodisi.LostLegaciesRelicHandler;
 import ti4.discord.interactions.commands.CommandHelper;
 import ti4.game.Game;
 import ti4.game.Player;
@@ -97,7 +95,7 @@ public class CardsInfoService {
             buttons.add(Buttons.gray("exhaustAgent_hacanagent", "Use Hacan Agent", FactionEmojis.Hacan));
         }
         if (player.hasUnexhaustedLeader("netrunnersagent")) {
-            buttons.add(NetrunnersLeadersHandler.getOverclockCardsInfoButton(player));
+            buttons.add(NetrunnersLeadersHandler.getAgentCardsInfoButton(player));
         }
         if (player.hasUnexhaustedLeader("ironagent")) {
             buttons.add(IronLeadersHandler.getMasterOfDefenseCardsInfoButton());
@@ -139,18 +137,9 @@ public class CardsInfoService {
         if (player.hasUnexhaustedLeader("ashenagent")) {
             buttons.add(AshenLeadersHandler.getAshTenderCardsInfoButton(player));
         }
-        if (player.hasUnexhaustedLeader("taagent")) {
-            buttons.add(TaLeadersHandler.getLenCardsInfoButton());
-        }
         if (player.hasUnexhaustedLeader("dreamagent")
-                && !DreamButtonHandler.getDreamAgentAnomalyTiles(game).isEmpty()) {
-            buttons.add(DreamButtonHandler.getDreamAgentCardsInfoButton(player));
-        }
-        if (player.hasUnexhaustedLeader("crystellumagent")) {
-            buttons.add(CrystellumLeadersHandler.getCrystellumAgentButton(player));
-        }
-        if (player.hasTech("becrystmb") && player.isActivePlayer()) {
-            buttons.add(CrystellumFactionTechHandler.getMolecularBindingButton(player));
+                && !DreamLeadersHandler.getDreamAgentAnomalyTiles(game).isEmpty()) {
+            buttons.add(DreamLeadersHandler.getDreamAgentCardsInfoButton(player));
         }
         if (player.hasAbility("doctrine") && player.hasAbility("paradigm") && player.hasAbility("natau_decree")) {
             buttons.add(NatauAbilityHandler.getShowDoctrinesButton(player));
@@ -223,6 +212,9 @@ public class CardsInfoService {
             buttons.add(
                     Buttons.gray("getAgentSelection_naazagent", "Use NRA Agent on Someone Else", FactionEmojis.Naaz));
         }
+        if (player.hasUnexhaustedLeader("crystellumagent")) {
+            CrystellumLeadersHandler.addCrystellumAgentCardsInfoButton(buttons, player);
+        }
         if (player.hasUnexhaustedLeader("empyreanagent")) {
             buttons.add(Buttons.gray(
                     "getAgentSelection_empyreanagent", "Use Empyrean Agent on Someone Else", FactionEmojis.Empyrean));
@@ -285,9 +277,6 @@ public class CardsInfoService {
         }
         if (player.hasUnlockedBreakthrough("yssarilbt")) {
             buttons.add(Buttons.green("startYssarilbt", "Use Yssaril Breakthrough", FactionEmojis.Yssaril));
-        }
-        if (player.hasAbility("control_network")) {
-            buttons.add(NetrunnersAbilitiesHandler.getControlNetworkCardsInfoButton(player));
         }
         if (player.hasAbility("pillage") && !game.isTwilightsFallMode()) {
             if (game.getStoredValue("willPillageOwnTransactions" + player.getFaction())
@@ -370,6 +359,9 @@ public class CardsInfoService {
             FactionEmojis f = FactionEmojis.Cabal;
             if (player.hasAbility("mark_of_pharadn")) {
                 f = FactionEmojis.pharadn;
+            }
+            if (player.hasAbility("forged_in_fire")) {
+                f = FactionEmojis.ashen;
             }
             if (player.hasAbility("shroud_of_lith")) {
                 f = FactionEmojis.kollecc;
@@ -474,8 +466,10 @@ public class CardsInfoService {
         if (player.hasUnexhaustedLeader("revenantverydithagent")) {
             buttons.add(RevenantLeadersHandler.getRevVerydithCardsInfoButton(game, player));
         }
-        RevenantLeadersHandler.addRedLeaderCardsInfoButtons(buttons, player);
-        if (RevenantLeadersHandler.canUseRevThronesHero(game, player)) {
+        if (player.hasUnexhaustedLeader("revenantxytherisagent")) {
+            buttons.add(RevenantLeadersHandler.getRevXytherisCardsInfoButton(player));
+        }
+        if (player.hasLeaderUnlocked("revenantthroneshero")) {
             buttons.add(RevenantLeadersHandler.getRevThronesHeroButton(player));
         }
         if (player.hasPlanet("cineron")
@@ -484,6 +478,9 @@ public class CardsInfoService {
         }
         if (player.hasUnexhaustedLeader("verydithagent")) {
             buttons.add(VerydithLeadersHandler.getVerydithAgentCardsInfoButton(player));
+        }
+        if (player.hasRelicReady("economicboon") && player.getExhaustedPlanets().size() > 0) {
+            buttons.add(LostLegaciesRelicHandler.getEconomicBoonCardsInfoButton(player));
         }
         buttons.add(Buttons.gray("offerPlayerPref", "Player Settings"));
         buttons.add(Buttons.gray("searchMyGames", "List My Games"));

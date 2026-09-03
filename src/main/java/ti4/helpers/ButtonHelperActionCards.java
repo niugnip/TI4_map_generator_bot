@@ -43,6 +43,9 @@ import ti4.service.emoji.MiscEmojis;
 import ti4.service.emoji.TI4Emoji;
 import ti4.service.emoji.UnitEmojis;
 import ti4.service.fow.BlindSelectionService;
+import ti4.service.fow.PlanetTargetService;
+import ti4.service.fow.PlanetTargetService.PlanetTargetSpec;
+import ti4.service.fow.PlanetTargetService.UnitHolderTargetSpec;
 import ti4.service.info.SecretObjectiveInfoService;
 import ti4.service.leader.CommanderUnlockCheckService;
 import ti4.service.planet.FlipTileService;
@@ -349,6 +352,7 @@ public final class ButtonHelperActionCards {
         checkForPlayingSummit(game, player);
         checkForPlayingBountyContracts(game, player);
         checkForPlayingSpliceCards(game, player);
+        checkForPreassigningRelitigate(game, player);
         if (player.getPlayableActionCards().contains("puppetsonastring")) {
             String msg =
                     "You have _Puppets On A String_ in your hand. If you're not about to pass, you can ignore this message."
@@ -359,6 +363,20 @@ public final class ButtonHelperActionCards {
             buttons.add(Buttons.red("deleteButtons", "Decline"));
             MessageHelper.sendMessageToChannelWithButtons(player.getCardsInfoThread(), msg, buttons);
         }
+    }
+
+    private static void checkForPreassigningRelitigate(Game game, Player player) {
+        if (!player.getPlayableActionCards().contains("relitigate")
+                || !game.getStoredValue("Relitigate").isEmpty()) return;
+
+        List<Button> buttons = List.of(
+                Buttons.green("resolvePreassignment_Relitigate", "Pre-Play Relitigate"),
+                Buttons.red("deleteButtons", "Decline"));
+        MessageHelper.sendMessageToChannelWithButtons(
+                player.getCardsInfoThread(),
+                player.getRepresentationNoPing()
+                        + ", you may pre-play _Relitigate_. It will trigger at the start of the next normal Agenda Phase.",
+                buttons);
     }
 
     @ButtonHandler("resolveCounterStroke")
@@ -788,17 +806,23 @@ public final class ButtonHelperActionCards {
         }
         MessageHelper.sendMessageToChannelWithButtons(player.getCorrectChannel(), message, buttons);
         buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayers()) {
-            if (p2 == player) {
-                continue;
+        String reparationsMsg = ", please tell the bot who took the planet from you.";
+        if (game.isFowMode()) {
+            // "Readied" is hidden state, so it cannot narrow the fog list at all - the list is simply the
+            // planets the actor knows exist, and an unreadied pick comes to nothing at resolution.
+            buttons = PlanetTargetService.targetButtons(game, player, reparationsSpec(), buttons);
+            reparationsMsg = ", please choose the planet you wish to exhaust.";
+        } else {
+            for (Player p2 : game.getRealPlayers()) {
+                if (p2 == player) {
+                    continue;
+                }
+                buttons.add(FoWHelper.fogSafeTargetButton("reparationsStep2_" + p2.getFaction(), "gray", p2));
             }
-            buttons.add(FoWHelper.fogSafeTargetButton("reparationsStep2_" + p2.getFaction(), "gray", p2));
         }
         ButtonHelper.deleteMessage(event);
         MessageHelper.sendMessageToChannelWithButtons(
-                player.getCorrectChannel(),
-                player.getRepresentationUnfogged() + ", please tell the bot who took the planet from you.",
-                buttons);
+                player.getCorrectChannel(), player.getRepresentationUnfogged() + reparationsMsg, buttons);
     }
 
     @ButtonHandler("resolveParleyStep1")
@@ -869,17 +893,21 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("resolveReactorMeltdownStep1")
     public static void resolveReactorMeltdownStep1(Player player, Game game, ButtonInteractionEvent event) {
         List<Button> buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayers()) {
-            if (p2 == player) {
-                continue;
+        String msg = ", please choose who you wish to play _Reactor Meltdown_ on.";
+        if (game.isFowMode()) {
+            buttons = PlanetTargetService.unitHolderTargetButtons(game, player, meltdownSpec(game), buttons);
+            msg = ", please choose the space dock you wish to melt.";
+        } else {
+            for (Player p2 : game.getRealPlayers()) {
+                if (p2 == player) {
+                    continue;
+                }
+                buttons.add(FoWHelper.fogSafeTargetButton("reactorMeltdownStep2_" + p2.getFaction(), "gray", p2));
             }
-            buttons.add(FoWHelper.fogSafeTargetButton("reactorMeltdownStep2_" + p2.getFaction(), "gray", p2));
         }
         ButtonHelper.deleteMessage(event);
         MessageHelper.sendMessageToChannelWithButtons(
-                player.getCorrectChannel(),
-                player.getRepresentationUnfogged() + ", please choose who you wish to play _Reactor Meltdown_ on.",
-                buttons);
+                player.getCorrectChannel(), player.getRepresentationUnfogged() + msg, buttons);
     }
 
     @ButtonHandler("resolveFrontline")
@@ -945,13 +973,11 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("resolveUprisingStep1")
     public static void resolveUprisingStep1(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         List<Button> buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayers()) {
-            if (p2 == player) {
-                continue;
-            }
-            if (game.isFowMode()) { // skip choosing player
-                buttons.addAll(getUprisingTargetsFor(p2, game));
-            } else {
+        if (!game.isFowMode()) {
+            for (Player p2 : game.getRealPlayers()) {
+                if (p2 == player) {
+                    continue;
+                }
                 Button button = Buttons.gray(
                         "uprisingStep2_" + p2.getFaction(), p2.getFactionModel().getShortName());
                 String factionEmojiString = p2.getFactionEmoji();
@@ -962,8 +988,10 @@ public final class ButtonHelperActionCards {
         ButtonHelper.deleteMessage(event);
         String msg = ", please choose which player's planet you wish to _Uprise_ against their oppressors.";
         if (game.isFowMode()) {
-            BlindSelectionService.filterForBlindPlanetSelection(
-                    game, player, buttons, "uprisingStep2_" + BlindSelectionService.TBD_FACTION);
+            // Step3, not Step2: naming Step2 here sent a validated blind target into the player-picking
+            // handler, which discarded the planet and posted the victim's entire readied-planet list.
+            // "Readied" and "not a home system" are hidden state, so they are enforced at resolution.
+            buttons = PlanetTargetService.targetButtons(game, player, uprisingSpec(), buttons);
             msg = ", please choose the planet you wish to exhaust.";
         }
         MessageHelper.sendMessageToChannelWithButtons(
@@ -1044,13 +1072,11 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("resolvePlagueStep1")
     public static void resolvePlagueStep1(Player player, Game game, ButtonInteractionEvent event) {
         List<Button> buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayers()) {
-            if (p2 == player) {
-                continue;
-            }
-            if (game.isFowMode()) { // skip choosing player
-                buttons.addAll(getPlagueTargetsFor(p2, game));
-            } else {
+        if (!game.isFowMode()) {
+            for (Player p2 : game.getRealPlayers()) {
+                if (p2 == player) {
+                    continue;
+                }
                 Button button = Buttons.gray(
                         "plagueStep2_" + p2.getFaction(), p2.getFactionModel().getShortName());
                 String factionEmojiString = p2.getFactionEmoji();
@@ -1061,8 +1087,7 @@ public final class ButtonHelperActionCards {
         ButtonHelper.deleteButtonAndDeleteMessageIfEmpty(event);
         String msg = ", please choose who controls the planet that you wish to target.";
         if (game.isFowMode()) {
-            BlindSelectionService.filterForBlindPlanetSelection(
-                    game, player, buttons, "plagueStep3_" + BlindSelectionService.TBD_FACTION);
+            buttons = PlanetTargetService.targetButtons(game, player, plagueSpec(), buttons);
             msg = ", please choose the planet you wish to target.";
         }
 
@@ -1152,7 +1177,24 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("ghostShipStep2_")
     public static void resolveGhostShipStep2(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Tile tile = game.getTileByPosition(buttonID.split("_")[1]);
+        if (tile == null || !FoWHelper.doesTileHaveWHs(game, tile.getPosition())) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        // getGhostShipButtons' own rule: no other player may have ships here. Blind Target skips the list,
+        // so it has to be re-checked here too.
+        for (Player p2 : game.getRealPlayersNNeutral()) {
+            if (p2 != player && FoWHelper.playerHasActualShipsInSystem(p2, tile)) {
+                PlanetTargetService.fizzle(event, player);
+                return;
+            }
+        }
+        // flipTileIfNeeded can itself hand back null for a tile it cannot resolve.
         tile = FlipTileService.flipTileIfNeeded(event, tile, game);
+        if (tile == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         AddUnitService.addUnits(event, tile, game, player.getColor(), "destroyer");
         ButtonHelper.deleteMessage(event);
         MessageHelper.sendMessageToChannel(
@@ -1163,7 +1205,7 @@ public final class ButtonHelperActionCards {
         Player p2 = game.getPlayerFromLeader("empyreancommander");
         CommanderUnlockCheckService.checkPlayer(p2, "empyrean");
         CommanderUnlockCheckService.checkPlayer(player, "ghost", "ghoti");
-        if (tile.getPosition().startsWith("frac")) {
+        if (tile.isFracture()) {
             CommanderUnlockCheckService.checkPlayer(player, "obsidian");
         }
     }
@@ -1171,6 +1213,18 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("probeStep2_")
     public static void resolveProbeStep2(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Tile tile = game.getTileByPosition(buttonID.split("_")[1]);
+        // getFrontierTokenButtonsRaw's one rule common to both Frontier Rider and Circlet of the Void: the
+        // system actually has a frontier token. Blind Target skips the list, so it has to be re-checked here
+        // too - the button id alone can't say which of the two callers built it, so this only enforces the
+        // rule they share, not Circlet's extra no-other-ships requirement.
+        if (tile == null
+                || !tile.getUnitHolders()
+                        .get(Constants.SPACE)
+                        .getTokenList()
+                        .contains(Mapper.getTokenID(Constants.FRONTIER))) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         ButtonHelper.resolveFullFrontierExplore(game, player, tile, event);
         ButtonHelper.deleteMessage(event);
         MessageHelper.sendMessageToChannel(
@@ -1182,10 +1236,8 @@ public final class ButtonHelperActionCards {
     public static void resolveCrippleDefensesStep1(
             Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         List<Button> buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayers()) {
-            if (game.isFowMode()) { // skip choosing player
-                buttons.addAll(getCrippleTargetsFor(p2, game));
-            } else {
+        if (!game.isFowMode()) {
+            for (Player p2 : game.getRealPlayers()) {
                 Button button = Buttons.gray(
                         "crippleStep2_" + p2.getFaction(), p2.getFactionModel().getShortName());
                 String factionEmojiString = p2.getFactionEmoji();
@@ -1196,8 +1248,8 @@ public final class ButtonHelperActionCards {
         ButtonHelper.deleteMessage(event);
         String msg = ", please choose which player controls the planet whose Defenses you wish to Cripple.";
         if (game.isFowMode()) {
-            BlindSelectionService.filterForBlindPlanetSelection(
-                    game, player, buttons, "crippleStep3_" + BlindSelectionService.TBD_FACTION);
+            // Cripple may legitimately target your own planets, so self-owned ones stay in the list.
+            buttons = PlanetTargetService.targetButtons(game, player, crippleSpec(), buttons);
             msg = ", please choose the planet you wish to Cripple the Defenses of.";
         }
         MessageHelper.sendMessageToChannelWithButtons(
@@ -1207,18 +1259,28 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("resolveInfiltrateStep1")
     public static void resolveInfiltrateStep1(Player player, Game game, ButtonInteractionEvent event) {
         List<Button> buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayers()) {
-            if (p2 == player) {
-                continue;
+        String msg = ", please choose which player controls the planet you are Infiltrating.";
+        if (game.isFowMode()) {
+            // Infiltrate resolves on the planet you have just gained control of, so the target is always a
+            // planet you already hold. Listing your own planets discloses nothing, and it is a far shorter
+            // list than "every planet you know about".
+            for (String planet : player.getPlanets()) {
+                buttons.add(Buttons.gray(
+                        "infiltrateStep3_" + player.getFaction() + "_" + planet,
+                        Helper.getPlanetRepresentation(planet, game)));
             }
-            buttons.add(FoWHelper.fogSafeTargetButton("infiltrateStep2_" + p2.getFaction(), "gray", p2));
+            msg = ", please choose the planet you are Infiltrating.";
+        } else {
+            for (Player p2 : game.getRealPlayers()) {
+                if (p2 == player) {
+                    continue;
+                }
+                buttons.add(FoWHelper.fogSafeTargetButton("infiltrateStep2_" + p2.getFaction(), "gray", p2));
+            }
         }
         ButtonHelper.deleteMessage(event);
         MessageHelper.sendMessageToChannelWithButtons(
-                player.getCorrectChannel(),
-                player.getRepresentationUnfogged()
-                        + ", please choose which player controls the planet you are Infiltrating.",
-                buttons);
+                player.getCorrectChannel(), player.getRepresentationUnfogged() + msg, buttons);
     }
 
     @ButtonHandler("resolveSpyStep1")
@@ -1370,13 +1432,11 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("resolveUnstableStep1")
     public static void resolveUnstableStep1(Player player, Game game, ButtonInteractionEvent event) {
         List<Button> buttons = new ArrayList<>();
-        for (Player p2 : game.getRealPlayersNDummies()) {
-            if (p2 == player) {
-                continue;
-            }
-            if (game.isFowMode()) { // skip choosing player
-                buttons.addAll(getUnstableTargetsFor(p2, game));
-            } else {
+        if (!game.isFowMode()) {
+            for (Player p2 : game.getRealPlayersNDummies()) {
+                if (p2 == player) {
+                    continue;
+                }
                 Button button = Buttons.gray(
                         "unstableStep2_" + p2.getFaction(), p2.getFactionModel().getShortName());
                 String factionEmojiString = p2.getFactionEmoji();
@@ -1387,8 +1447,8 @@ public final class ButtonHelperActionCards {
         ButtonHelper.deleteMessage(event);
         String msg = ", please choose which player owns the soon-to-be _Unstable Planet_.";
         if (game.isFowMode()) {
-            BlindSelectionService.filterForBlindPlanetSelection(
-                    game, player, buttons, "unstableStep3_" + BlindSelectionService.TBD_FACTION);
+            // Hazardous is a printed planet trait, so it is safe to filter the list on it.
+            buttons = PlanetTargetService.targetButtons(game, player, unstableSpec(game), buttons);
             msg = ", please choose the planet you wish to exhaust.";
         }
         MessageHelper.sendMessageToChannelWithButtons(
@@ -1556,11 +1616,23 @@ public final class ButtonHelperActionCards {
         ButtonHelper.deleteMessage(event);
     }
 
+    // Non-fog only: in fog the target list cannot be built from readied planets at all, since which of a
+    // player's planets are readied is hidden state. See resolveReparationsStep1.
     @ButtonHandler("reparationsStep2_")
     public static void resolveReparationsStep2(
             Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
+        if (p2 == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         if (p2.getReadiedPlanets().isEmpty()) {
+            // Outside fog this is harmless; in fog it would answer "does that player have any readied
+            // planets" before the actor has committed to anything.
+            if (game.isFowMode()) {
+                PlanetTargetService.fizzle(event, player);
+                return;
+            }
             MessageHelper.sendMessageToChannel(
                     player.getCorrectChannel(),
                     "Chosen player had no readied planets. This is fine and nothing more needs to be done.");
@@ -1643,6 +1715,12 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("uprisingStep2_")
     public static void resolveUprisingStep2(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
+        // Unreachable once the fog path names Step3 (it used to land here and dump p2's whole planet list),
+        // but a null faction segment must never NPE.
+        if (p2 == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         if (p2.getReadiedPlanets().isEmpty()) {
             MessageHelper.sendMessageToChannel(
                     player.getCorrectChannel(), "Chosen player had no readied planets. Nothing has been done.");
@@ -1764,19 +1842,39 @@ public final class ButtonHelperActionCards {
         FoWHelper.notifyActorAndAffectedElsePublic(
                 game,
                 player,
-                player.getRepresentationUnfogged() + ", you've _Signal Jam_'d the system: "
+                player.getRepresentationUnfogged() + ", you placed a player's command token in the system: "
                         + tile.getRepresentationForButtons(game, player) + ".",
                 p2,
-                p2.getRepresentationUnfogged() + ", you've been _Signal Jam_'d in system: "
+                p2.getRepresentationUnfogged() + ", your command token has been placed in system: "
                         + tile.getRepresentationForButtons(game, p2) + ".",
-                player.getRepresentationUnfogged() + " has _Signal Jam_'d " + p2.getRepresentationUnfogged()
-                        + " in tile " + tile.getRepresentationForButtons(game, p2) + ".");
+                player.getRepresentationUnfogged() + " has placed " + p2.getRepresentationUnfogged()
+                        + " command token in tile " + tile.getRepresentationForButtons(game, p2) + ".");
     }
 
+    /**
+     * Reactor Meltdown melts one space dock, and a system can hold one in space and one on each planet, so
+     * the target names the holder rather than just the system. VISIBLE_NOW because a dock is a unit: a
+     * remembered system tells you nothing about whether it is still there.
+     */
+    public static UnitHolderTargetSpec meltdownSpec(Game game) {
+        return UnitHolderTargetSpec.of("reactorMeltdownStep3_" + BlindSelectionService.TBD_FACTION, UnitType.Spacedock)
+                .excludingSelf()
+                .where((tile, uh) -> Constants.SPACE.equals(uh.getName())
+                        || (!uh.getName().contains("custodia")
+                                && !uh.getName().contains("ghoti")
+                                && !tile.isHomeSystem(game)));
+    }
+
+    // Non-fog only: the fog path skips the player-picking step, because anonymising who you point at and
+    // then listing that player's space docks leaks the same information in two steps.
     @ButtonHandler("reactorMeltdownStep2_")
     public static void resolveReactorMeltdownStep2(
             Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
+        if (p2 == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         List<Button> buttons = new ArrayList<>();
         for (String planet : p2.getPlanetsAllianceMode()) {
             if (planet.contains("custodia") || planet.contains("ghoti")) {
@@ -1809,12 +1907,16 @@ public final class ButtonHelperActionCards {
     @ButtonHandler("reactorMeltdownStep3_")
     public static void resolveReactorMeltdownStep3(
             Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        Tile tile = game.getTileByPosition(buttonID.split("_")[2]);
-        String unitHolderName = buttonID.split("_")[3];
-        if ("space".equalsIgnoreCase(unitHolderName)) {
-            unitHolderName = "";
+        if (PlanetTargetService.handleUnitHolderPage(event, game, player, buttonID, meltdownSpec(game))) return;
+        var target = PlanetTargetService.resolveUnitHolder(game, player, buttonID, meltdownSpec(game));
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
         }
+        Tile tile = target.tile();
+        UnitHolder holder = target.holder();
+        Player p2 = target.owner();
+        String unitHolderName = Constants.SPACE.equals(holder.getName()) ? "" : holder.getName();
         RemoveUnitService.removeUnits(event, tile, game, p2.getColor(), "sd " + unitHolderName);
         FoWHelper.notifyActorAndAffectedElsePublic(
                 game,
@@ -1908,16 +2010,19 @@ public final class ButtonHelperActionCards {
         return buttons;
     }
 
+    // Non-fog only: the fog path skips straight from Step1 to Step3, so no filtering is needed here.
     @ButtonHandler("infiltrateStep2_")
     public static void resolveInfiltrateStep2(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
+        if (p2 == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         List<Button> buttons = new ArrayList<>();
         for (String planet : p2.getPlanets()) {
             buttons.add(Buttons.gray(
                     "infiltrateStep3_" + p2.getFaction() + "_" + planet, Helper.getPlanetRepresentation(planet, game)));
         }
-        BlindSelectionService.filterForBlindPlanetSelection(
-                game, player, buttons, "infiltrateStep3_" + p2.getFaction());
         ButtonHelper.deleteMessage(event);
         MessageHelper.sendMessageToChannelWithButtons(
                 player.getCorrectChannel(),
@@ -2050,6 +2155,27 @@ public final class ButtonHelperActionCards {
             buttons.add(Buttons.red("deleteButtons", "Decline"));
             MessageHelper.sendMessageToChannelWithButtons(player.getCardsInfoThread(), msg, buttons);
         }
+    }
+
+    public static void checkForPlayingStrategicFocus(Game game, Player player) {
+        if (IsPlayerElectedService.isPlayerElected(game, player, "censure")
+                || IsPlayerElectedService.isPlayerElected(game, player, "absol_censure")) {
+            return;
+        }
+        if (!player.getPlayableActionCards().contains("strategic_focus")) {
+            return;
+        }
+        Integer handIndex = player.getActionCards().get("strategic_focus");
+        String msg = player.getRepresentation()
+                + ", you have _Strategic Focus_ in your hand and just passed — this is the window to play it."
+                + " Use the button below to play it now, or ignore this message if you don't want to.";
+        List<Button> buttons = new ArrayList<>();
+        if (handIndex != null) {
+            buttons.add(Buttons.green(
+                    Constants.AC_PLAY_FROM_HAND + handIndex, "Play Strategic Focus", CardEmojis.getACEmoji(game)));
+        }
+        buttons.add(Buttons.red("deleteButtons", "Decline"));
+        MessageHelper.sendMessageToChannelWithButtons(player.getCardsInfoThread(), msg, buttons);
     }
 
     public static void checkForPlayingBountyContracts(Game game, Player player) {
@@ -2303,6 +2429,40 @@ public final class ButtonHelperActionCards {
                 buttons);
     }
 
+    // Each card's fog targeting rules live in exactly one place, so the candidate list and the
+    // resolution check can never drift apart. Package-private so PlanetTargetSpecTest can pin them.
+
+    /** Cripple Defenses may target your own planets, so self-owned ones stay in the list. */
+    public static PlanetTargetSpec crippleSpec() {
+        return PlanetTargetSpec.of("crippleStep3_" + BlindSelectionService.TBD_FACTION);
+    }
+
+    /** Uprising exhausts another player's readied planet, so it needs a controller. */
+    public static PlanetTargetSpec uprisingSpec() {
+        return PlanetTargetSpec.of("uprisingStep3_" + BlindSelectionService.TBD_FACTION)
+                .excludingSelf()
+                .requiringController();
+    }
+
+    public static PlanetTargetSpec plagueSpec() {
+        return PlanetTargetSpec.of("plagueStep3_" + BlindSelectionService.TBD_FACTION)
+                .excludingSelf()
+                .requiringController();
+    }
+
+    public static PlanetTargetSpec reparationsSpec() {
+        return PlanetTargetSpec.of("reparationsStep3_" + BlindSelectionService.TBD_FACTION)
+                .excludingSelf()
+                .requiringController();
+    }
+
+    /** Shared by the fog list and by resolution, so a blind-typed target obeys the same rules. */
+    public static PlanetTargetSpec unstableSpec(Game game) {
+        return PlanetTargetSpec.of("unstableStep3_" + BlindSelectionService.TBD_FACTION)
+                .excludingSelf()
+                .where(p -> ButtonHelper.getTypeOfPlanet(game, p.getName()).contains("hazardous"));
+    }
+
     private static List<Button> getUnstableTargetsFor(Player p2, Game game) {
         List<Button> buttons = new ArrayList<>();
         for (String planet : p2.getPlanets()) {
@@ -2317,8 +2477,16 @@ public final class ButtonHelperActionCards {
 
     @ButtonHandler("unstableStep3_")
     public static void resolveUnstableStep3(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        String planet = buttonID.split("_")[2];
+        if (PlanetTargetService.handlePlanetPage(event, game, player, buttonID, unstableSpec(game))) return;
+        // The spec is passed so its hazardous filter runs here too: a blind-typed target never passed
+        // through the list at all.
+        var target = PlanetTargetService.resolve(game, player, buttonID, unstableSpec(game), null);
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        Player p2 = target.owner();
+        String planet = target.planetId();
         String planetRep = Helper.getPlanetRepresentation(planet, game);
         ButtonHelper.deleteMessage(event);
         boolean didExhaust = false;
@@ -2326,7 +2494,7 @@ public final class ButtonHelperActionCards {
             p2.exhaustPlanet(planet);
             didExhaust = true;
         }
-        UnitHolder uH = ButtonHelper.getUnitHolderFromPlanetName(planet, game);
+        UnitHolder uH = target.unitHolder();
         int amountToKill = uH.getUnitCount(UnitType.Infantry, p2.getColor());
         if (amountToKill > 3) {
             amountToKill = 3;
@@ -2378,8 +2546,23 @@ public final class ButtonHelperActionCards {
 
     @ButtonHandler("uprisingStep3_")
     public static void resolveUprisingStep3(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        String planet = buttonID.split("_")[2];
+        if (PlanetTargetService.handlePlanetPage(event, game, player, buttonID, uprisingSpec())) return;
+        // Readied and not-a-home-system were previously enforced only by which buttons got built, so nothing
+        // checked them once a target could be typed blind. Both are hidden state, so they fizzle here rather
+        // than being filtered out of the list.
+        var target = PlanetTargetService.resolve(
+                game,
+                player,
+                buttonID,
+                uprisingSpec(),
+                t -> t.owner().getReadiedPlanets().contains(t.planetId())
+                        && !t.tile().isHomeSystem(game));
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        Player p2 = target.owner();
+        String planet = target.planetId();
         String planetRep = Helper.getPlanetRepresentation(planet, game);
         ButtonHelper.deleteMessage(event);
         p2.exhaustPlanet(planet);
@@ -2404,11 +2587,17 @@ public final class ButtonHelperActionCards {
 
     @ButtonHandler("plagueStep3_")
     public static void resolvePlagueStep3(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        String planet = buttonID.split("_")[2];
+        if (PlanetTargetService.handlePlanetPage(event, game, player, buttonID, plagueSpec())) return;
+        var target = PlanetTargetService.resolve(game, player, buttonID, plagueSpec(), null);
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        Player p2 = target.owner();
+        String planet = target.planetId();
         String planetRep = Helper.getPlanetRepresentation(planet, game);
         ButtonHelper.deleteMessage(event);
-        UnitHolder uH = ButtonHelper.getUnitHolderFromPlanetName(planet, game);
+        UnitHolder uH = target.unitHolder();
         int amount = uH.getUnitCount(UnitType.Infantry, p2.getColor());
         int hits = 0;
         UnitKey key = Units.getUnitKey(UnitType.Infantry, p2.getColor());
@@ -2429,9 +2618,8 @@ public final class ButtonHelperActionCards {
                     if (x == 1) nice &= (d1.getResult() == 9);
                 }
                 msg.append(nice ? " (nice)" : "")
-                        .append(".\n Total hits were ")
-                        .append(hits)
-                        .append(".");
+                        .append(".")
+                        .append(CombatMessageHelper.displayHitResults(hits).stripTrailing());
             }
             MessageHelper.sendMessageToChannel(p2.getCorrectChannel(), msg.toString());
             if (hits > 0 && p2.hasAbility("data_recovery")) {
@@ -2452,11 +2640,15 @@ public final class ButtonHelperActionCards {
                 adjective = " typical";
             }
         }
+        // See resolveCrippleStep3: a zero-effect hit must be indistinguishable from an illegal target.
+        String plagueActorMessage = game.isFowMode() && amount == 0
+                ? player.getRepresentationUnfogged() + ", " + PlanetTargetService.fizzleMessage()
+                : player.getRepresentationUnfogged() + ", you _Plague_'d " + planetRep + " and got "
+                        + StringHelper.pluralize(hits, "hit");
         FoWHelper.notifyActorAndAffectedElsePublic(
                 game,
                 player,
-                player.getRepresentationUnfogged() + ", you _Plague_'d " + planetRep + " and got "
-                        + StringHelper.pluralize(hits, "hit"),
+                plagueActorMessage,
                 p2,
                 p2.getRepresentationUnfogged() + ", your planet " + planetRep + " suffered a" + adjective
                         + " _Plague_ and you lost " + hits + " infantry.",
@@ -2466,14 +2658,51 @@ public final class ButtonHelperActionCards {
         DestroyUnitService.destroyUnit(event, game.getTileFromPlanet(planet), game, key, hits, uH, false);
     }
 
+    /**
+     * Picks whose fighters the storm actually hits. Deliberately never the acting player, and deliberately
+     * not "first player with ships here" - that was the old behaviour and could select the wrong victim, or
+     * the actor themselves. When several players qualify we do not ask the actor to choose, since being
+     * offered a choice would itself reveal that two players have fighters in the system.
+     */
+    private static Player micrometeoroidVictim(Game game, Player actor, Tile tile) {
+        UnitHolder space = tile.getUnitHolders().get(Constants.SPACE);
+        if (space == null) return null;
+        Player best = null;
+        int bestCount = 0;
+        for (Player p2 : game.getRealPlayers()) {
+            if (p2 == actor || p2.getColor() == null) continue;
+            int count = space.getUnitCount(UnitType.Fighter, p2.getColor());
+            if (count > bestCount) {
+                bestCount = count;
+                best = p2;
+            }
+        }
+        return best;
+    }
+
     @ButtonHandler("micrometeoroidStormStep3_")
     public static void resolveMicrometeoroidStormStep3(
             Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
         String tilePos = buttonID.split("_")[2];
         Tile tile = game.getTileByPosition(tilePos);
+        if (tile == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        String factionSegment = buttonID.split("_")[1];
+        Player p2 = BlindSelectionService.TBD_FACTION.equals(factionSegment)
+                ? micrometeoroidVictim(game, player, tile)
+                : game.getPlayerFromColorOrFaction(factionSegment);
+        if (p2 == null || p2.getColor() == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         ButtonHelper.deleteMessage(event);
-        UnitHolder uH = tile.getUnitHolders().get("space");
+        UnitHolder uH = tile.getUnitHolders().get(Constants.SPACE);
+        if (uH == null) {
+            PlanetTargetService.fizzle(player);
+            return;
+        }
         int amount = uH.getUnitCount(UnitType.Fighter, p2.getColor());
         int hits = 0;
         if (amount > 0) {
@@ -2486,7 +2715,8 @@ public final class ButtonHelperActionCards {
                     hits++;
                 }
             }
-            msg = new StringBuilder(msg.substring(0, msg.length() - 2) + "\n Total hits were " + hits);
+            msg = new StringBuilder(msg.substring(0, msg.length() - 2)
+                    + CombatMessageHelper.displayHitResults(hits).stripTrailing());
             UnitKey key = Units.getUnitKey(UnitType.Fighter, p2.getColor());
             var unitParsed = new ParsedUnit(key, hits, Constants.SPACE);
             RemoveUnitService.removeUnit(event, tile, game, unitParsed);
@@ -2498,10 +2728,15 @@ public final class ButtonHelperActionCards {
                 ButtonHelperFactionSpecific.cabalEatsUnit(p2, game, p2, hits, "fighter", event);
             }
         }
+        // Zero hits draws from the same pool as a fizzle, so "no fighters here" and "no victim at all" read
+        // identically to the actor.
         MessageHelper.sendMessageToChannel(
                 player.getCorrectChannel(),
-                player.getRepresentationUnfogged() + ", you stormed " + tile.getRepresentationForButtons(game, player)
-                        + " and got " + StringHelper.pluralize(hits, "hit"));
+                game.isFowMode() && hits == 0
+                        ? player.getRepresentationUnfogged() + ", " + PlanetTargetService.fizzleMessage()
+                        : player.getRepresentationUnfogged() + ", you stormed "
+                                + tile.getRepresentationForButtons(game, player) + " and got "
+                                + StringHelper.pluralize(hits, "hit"));
         MessageHelper.sendMessageToChannel(
                 p2.getCorrectChannel(),
                 p2.getRepresentationUnfogged() + ", your fighter" + (amount == 1 ? "" : "s") + " in "
@@ -2511,11 +2746,17 @@ public final class ButtonHelperActionCards {
 
     @ButtonHandler("crippleStep3_")
     public static void resolveCrippleStep3(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        String planet = buttonID.split("_")[2];
+        if (PlanetTargetService.handlePlanetPage(event, game, player, buttonID, crippleSpec())) return;
+        var target = PlanetTargetService.resolve(game, player, buttonID, crippleSpec(), null);
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        Player p2 = target.owner();
+        String planet = target.planetId();
         String planetRep = Helper.getPlanetRepresentation(planet, game);
         ButtonHelper.deleteMessage(event);
-        UnitHolder uH = ButtonHelper.getUnitHolderFromPlanetName(planet, game);
+        UnitHolder uH = target.unitHolder();
 
         int amount = uH.getUnitCount(UnitType.Pds, p2.getColor());
         if (amount > 0) {
@@ -2538,11 +2779,17 @@ public final class ButtonHelperActionCards {
                 amount += amount2;
             }
         }
+        // In fog, a legal target that happened to hold no PDS must read exactly like a target that was never
+        // legal at all - otherwise the actor learns "that planet is real and owned" for free. The victim is
+        // still told, since they can legitimately see their own planet being hit.
+        String actorMessage = game.isFowMode() && amount == 0
+                ? player.getRepresentationUnfogged() + ", " + PlanetTargetService.fizzleMessage()
+                : player.getRepresentationUnfogged() + ", you crippled " + planetRep
+                        + (amount > 0 ? " and killed " + amount + " PDS." : ". There were no PDS to kill.");
         FoWHelper.notifyActorAndAffectedElsePublic(
                 game,
                 player,
-                player.getRepresentationUnfogged() + ", you crippled " + planetRep
-                        + (amount > 0 ? " and killed " + amount + " PDS." : ". There were no PDS to kill."),
+                actorMessage,
                 p2,
                 p2.getRepresentationUnfogged() + ", your planet " + planetRep + " was crippled"
                         + (amount > 0 ? " killing " + amount + " of your PDS." : ". There were no PDS to kill."),
@@ -2555,17 +2802,28 @@ public final class ButtonHelperActionCards {
 
     @ButtonHandler("infiltrateStep3_")
     public static void resolveInfiltrateStep3(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        String planet = buttonID.split("_")[2];
-        UnitHolder uH = ButtonHelper.getUnitHolderFromPlanetName(planet, game);
-        ButtonHelperModifyUnits.infiltratePlanet(player, game, uH, event);
+        var target = PlanetTargetService.resolve(game, player, buttonID, null);
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        ButtonHelperModifyUnits.infiltratePlanet(player, game, target.unitHolder(), event);
         ButtonHelper.deleteMessage(event);
     }
 
     @ButtonHandler("reparationsStep3_")
     public static void resolveReparationsStep3(
             Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        String planet = buttonID.split("_")[2];
+        if (PlanetTargetService.handlePlanetPage(event, game, player, buttonID, reparationsSpec())) return;
+        var target = PlanetTargetService.resolve(game, player, buttonID, reparationsSpec(), t -> t.owner()
+                .getReadiedPlanets()
+                .contains(t.planetId()));
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        Player p2 = target.owner();
+        String planet = target.planetId();
         String planetRep = Helper.getPlanetRepresentation(planet, game);
         p2.exhaustPlanet(planet);
         FoWHelper.notifyActorAndAffectedElsePublic(
@@ -2574,8 +2832,7 @@ public final class ButtonHelperActionCards {
                 player.getRepresentationUnfogged() + ", you exhausted " + planetRep + ".",
                 p2,
                 p2.getRepresentationUnfogged() + ", your planet " + planetRep + " was exhausted.",
-                player.getRepresentationUnfogged() + ", you exhausted " + planetRep + " belonging to "
-                        + p2.getRepresentationUnfogged() + ".");
+                player.getRepresentationUnfogged() + ", you exhausted " + planetRep + ".");
         ButtonHelper.deleteMessage(event);
     }
 
@@ -2809,7 +3066,13 @@ public final class ButtonHelperActionCards {
         return buttons;
     }
 
-    private static List<Button> getFrontierTokenButtons(Game game, Player player, boolean requireNoOtherPlayersShips) {
+    /**
+     * The raw candidate list, with no fog filtering and no Blind Target button. Use this for availability
+     * checks: the filtered version always appends Blind Target, so it is never empty in fog and would report
+     * an action as available when there is nothing on the map to target.
+     */
+    private static List<Button> getFrontierTokenButtonsRaw(
+            Game game, Player player, boolean requireNoOtherPlayersShips) {
         List<Button> buttons = new ArrayList<>();
         for (Tile tile : game.getTileMap().values()) {
             if (tile.getUnitHolders().get("space").getTokenList().contains(Mapper.getTokenID(Constants.FRONTIER))) {
@@ -2819,8 +3082,23 @@ public final class ButtonHelperActionCards {
                 }
             }
         }
+        return buttons;
+    }
+
+    private static List<Button> getFrontierTokenButtons(Game game, Player player, boolean requireNoOtherPlayersShips) {
+        List<Button> buttons = getFrontierTokenButtonsRaw(game, player, requireNoOtherPlayersShips);
         BlindSelectionService.filterForBlindPositionSelection(game, player, buttons, "probeStep2");
         return buttons;
+    }
+
+    /** Availability check only - does not touch stored state and does not add a Blind Target button. */
+    public static boolean hasCircletTargets(Game game, Player player) {
+        return !getFrontierTokenButtonsRaw(game, player, true).isEmpty();
+    }
+
+    /** Availability check only - see {@link #hasCircletTargets}. */
+    public static boolean hasFrontierTokenTargets(Game game, Player player) {
+        return !getFrontierTokenButtonsRaw(game, player, false).isEmpty();
     }
 
     public static List<Button> getCircletButtons(Game game, Player player) {
@@ -2835,10 +3113,12 @@ public final class ButtonHelperActionCards {
     public static void resolveReverse(Game game, Player player, String buttonID, ButtonInteractionEvent event) {
         String acName = buttonID.replace("resolveReverse_", "");
         List<String> acStrings = new ArrayList<>(game.getDiscardActionCards().keySet());
+        boolean hideUnplayed = ActionCardHelper.hidesUnplayedDiscards(game, player);
         for (String acStringID : acStrings) {
             ActionCardModel actionCard = Mapper.getActionCard(acStringID);
             String actionCardTitle = actionCard.getName();
-            if (acName.equalsIgnoreCase(actionCardTitle)) {
+            if (acName.equalsIgnoreCase(actionCardTitle)
+                    && ActionCardHelper.isDiscardVisible(game, hideUnplayed, acStringID)) {
                 boolean picked = game.pickActionCard(
                         player.getUserID(), game.getDiscardActionCards().get(acStringID));
                 if (!picked) {

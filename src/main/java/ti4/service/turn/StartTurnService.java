@@ -12,9 +12,13 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.GenericInteractionCreateEvent;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.DreamButtonHandler;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.BorrowedTimeLLButtonHandler;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.PoliticalMarriageLLButtonHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ashen.AshenUnitHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersPromissoryHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.crystellum.CrystellumTechHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.crystellum.CrystellumUnitHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.dream.DreamBreakthroughHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.netrunners.NetrunnersAbilitiesHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaPromissoryHandler;
@@ -26,6 +30,7 @@ import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Reven
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Thrones.ThronesThroneHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Xytheris.XytherisAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.tyris.TyrisLeaderHandler;
+import ti4.discord.interactions.buttons.handlers.relics.theodisi.LostLegaciesRelicHandler;
 import ti4.game.Game;
 import ti4.game.Leader;
 import ti4.game.Player;
@@ -38,6 +43,7 @@ import ti4.helpers.ComponentActionHelper;
 import ti4.helpers.FoWHelper;
 import ti4.helpers.Helper;
 import ti4.helpers.StringHelper;
+import ti4.helpers.thundersedge.TeHelperActionCards;
 import ti4.helpers.thundersedge.TeHelperTechs;
 import ti4.image.BannerGenerator;
 import ti4.image.Mapper;
@@ -63,6 +69,7 @@ import ti4.service.fow.FowCommunicationThreadService;
 import ti4.service.fow.WhisperService;
 import ti4.service.info.CardsInfoService;
 import ti4.service.leader.CommanderUnlockCheckService;
+import ti4.service.relic.QuantumEntanglerService;
 import ti4.service.strategycard.PlayStrategyCardService;
 import ti4.service.strategycard.StrategyCardMessageService;
 import ti4.settings.users.UserSettingsManager;
@@ -72,6 +79,10 @@ public class StartTurnService {
 
     public static void turnStart(GenericInteractionCreateEvent event, Game game, Player player) {
         player.setInRoundTurnCount(player.getInRoundTurnCount() + 1);
+        PoliticalMarriageLLButtonHandler.clearExpiredRestriction(game, player);
+        if (BorrowedTimeLLButtonHandler.skipTurnIfNecessary(event, game, player)) {
+            return;
+        }
         game.removeStoredValue("currentActionSummary" + player.getFaction());
 
         CommanderUnlockCheckService.checkPlayer(player, "hacan");
@@ -84,6 +95,8 @@ public class StartTurnService {
 
         game.removeStoredValue("fortuneSeekers");
         ButtonHelperTacticalAction.resetStoredValuesForTacticalAction(game);
+        LostLegaciesRelicHandler.clearHornOfTheAbyssState(game);
+        QuantumEntanglerService.clearPendingQuantumEntanglers(game);
         RevenantLeadersHandler.clearRedLeaderTacticalState(game);
         AeternaAbilityHandler.clearMoonReturnStoredValues(game);
         ArcanumAbilityHandler.clearRitualOfAscensionStoredValues(game);
@@ -170,9 +183,6 @@ public class StartTurnService {
         game.setPhaseOfGame("action");
         AeternaPromissoryHandler.offerStasisFighterPlacement(event, game, player);
         ButtonHelperFactionSpecific.resolveMilitarySupportCheck(player, game);
-        if (NetrunnersPromissoryHandler.shouldOfferSharedNetworkAccessButtons(player, game)) {
-            NetrunnersPromissoryHandler.offerSharedNetworkAccessButtons(player, game);
-        }
         SabotageService.startOfTurnSaboWindowReminders(game, player);
         boolean isFowPrivateGame = game.isFowMode();
 
@@ -272,17 +282,7 @@ public class StartTurnService {
             for (Player p2 : game.getRealPlayers()) {
                 if (p2.getPlayableActionCards().contains("extremeduress")) {
                     game.removeStoredValue("ExtremeDuress");
-                    ActionCardHelper.playAC(event, game, p2, "extremeduress", game.getMainGameChannel());
-                    List<Button> buttons2 = new ArrayList<>();
-                    buttons2.add(Buttons.red(
-                            player.factionButtonChecker() + "concedeToED_" + p2.getFaction(),
-                            "Lose Action Cards, Give Trade Goods, And Show Secrets"));
-                    buttons2.add(
-                            Buttons.green("deleteButtons", "Give In And Play Strategy Card (or Sabo Extreme Duress)"));
-                    MessageHelper.sendMessageToChannel(
-                            player.getCorrectChannel(),
-                            player.getRepresentation() + ", please resolve _Extreme Duress_.",
-                            buttons2);
+                    TeHelperActionCards.autoResolveExtremeDuress(event, game, player, p2);
                 }
             }
         }
@@ -488,6 +488,18 @@ public class StartTurnService {
         if (!doneActionThisTurn && player.hasUnexhaustedLeader("kairnagent")) {
             startButtons.add(KairnLeadershandler.getKairnAgentButton(player));
         }
+        if (!doneActionThisTurn && player.hasAbility("proxy_network")) {
+            Button proxyNetworkButton = NetrunnersAbilitiesHandler.getProxyNetworkButton(game, player);
+            if (proxyNetworkButton != null) {
+                startButtons.add(proxyNetworkButton);
+            }
+        }
+        if (!doneActionThisTurn && player.hasUnit("crystellum_fighter3")) {
+            startButtons.add(CrystellumUnitHandler.addShardSwarmStartTurnButton(player));
+        }
+        if (!doneActionThisTurn && player.hasTechReady("becrysta")) {
+            CrystellumTechHandler.addAtomizationButton(startButtons, game, player);
+        }
         if (player.hasAbility("sting_of_the_hive") && XytherisAbilityHandler.hasStingOfTheHiveMines(game)) {
             startButtons.add(XytherisAbilityHandler.getStingOfTheHiveMineLedgerButton(player));
         }
@@ -562,7 +574,7 @@ public class StartTurnService {
                     startButtons.add(strategicAction);
                 }
             }
-            if (player.hasReadyBreakthrough("dreambt") && DreamButtonHandler.hasDreamBtNexusMove(game, player)) {
+            if (player.hasReadyBreakthrough("dreambt") && DreamBreakthroughHandler.hasDreamBtNexusMove(game, player)) {
                 startButtons.add(Buttons.gray(
                         factionChecker + "componentActionRes_exhaustBT_dreambt",
                         "Exhaust Dream-Space Convergence",
@@ -781,6 +793,20 @@ public class StartTurnService {
                         factionChecker + "exhaustTech_batyriy",
                         "Exhaust Temporal Displacement",
                         TechEmojis.CyberneticTech));
+            }
+            if (player.hasTech("dsolrar")
+                    && !player.getExhaustedTechs().contains("dsolrar")
+                    && !game.isTwilightsFallMode()) {
+                startButtons.add(Buttons.gray(
+                        factionChecker + "exhaustTech_dsolrar",
+                        "Exhaust False Flag Operations",
+                        FactionEmojis.olradin));
+            }
+            if (player.hasTech("tf-dsolrar") && !player.getExhaustedTechs().contains("tf-dsolrar")) {
+                startButtons.add(Buttons.gray(
+                        factionChecker + "exhaustTech_tf-dsolrar",
+                        "Exhaust False Flag Operations",
+                        FactionEmojis.olradin));
             }
             if (player.hasUnexhaustedLeader("kolleccagent")) {
                 startButtons.add(Buttons.gray(

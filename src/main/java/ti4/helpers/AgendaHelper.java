@@ -29,9 +29,10 @@ import org.jetbrains.annotations.NotNull;
 import ti4.discord.interactions.buttons.Buttons;
 import ti4.discord.interactions.buttons.handlers.actioncards.acd2.PublicOutrageAcd2ButtonHandler;
 import ti4.discord.interactions.buttons.handlers.actioncards.acd2.SettlementsAcd2ButtonHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.DreamButtonHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ta.TaLeadersHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Myrr.MyrrAbilitiesHandler;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.ExplorationRiderLLButtonHandler;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.TransitRiderLLButtonHandler;
+import ti4.discord.interactions.buttons.handlers.explore.theodisi.LostLegciesExploreHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.dream.DreamLeadersHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Veylor.VeylorAbilitiesHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Veylor.VeylorBreakthroughHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Veylor.VeylorLeadersHandler;
@@ -212,13 +213,11 @@ public final class AgendaHelper {
                 && !buttonID.contains("predictive")
                 && !buttonID.contains("everything")) {
             PlanetExhaust.doAction(player, planetName, game, false);
-            TaLeadersHandler.clearLenPredeclareForPlanet(game, player, planetName);
         }
         if (buttonID.contains("everything")) {
             for (String planet : player.getPlanets()) {
                 player.exhaustPlanet(planet);
             }
-            TaLeadersHandler.clearAllLenPredeclaresForPlayer(game, player);
         }
         String totalVotesSoFar = event.getMessage().getContentRaw();
         if (!buttonID.contains("argent")
@@ -547,7 +546,7 @@ public final class AgendaHelper {
                             String tiedWinner = winnerInfo.nextToken();
                             Button button = Buttons.blue(
                                     speaker.factionButtonChecker() + "resolveAgendaVote_outcomeTie* " + tiedWinner,
-                                    tiedWinner);
+                                    getAgendaOutcomeName(game, tiedWinner, true));
                             tiedWinners.add(button);
                         }
                     } else {
@@ -567,8 +566,11 @@ public final class AgendaHelper {
         } else {
             resolveTime = true;
             winner = buttonID.substring(buttonID.lastIndexOf('*') + 2);
+            // getAgendaOutcomeName renders the readable name; the raw id was both ugly and, for a planet
+            // outcome in fog, published before resolution.
             MessageHelper.sendMessageToChannel(
-                    game.getActionsChannel(), "## The speaker has broken the tie for \"" + winner + "\".");
+                    game.getActionsChannel(),
+                    "## The speaker has broken the tie for \"" + getAgendaOutcomeName(game, winner, true) + "\".");
         }
         if (resolveTime) {
             resolveTime(game, winner);
@@ -920,6 +922,16 @@ public final class AgendaHelper {
                     }
 
                     if (winningR != null
+                            && winningR.hasTech("thveylory")
+                            && specificVote.contains("Kleptocratic Politics")) {
+                        MessageHelper.sendMessageToChannelWithButtons(
+                                winningR.getCorrectChannel(),
+                                winningR.getRepresentation()
+                                        + ", please resolve _Kleptocratic Politics_ by using the buttons below. You do not spend a command token when doing this, if it removes one just use /player stats to add one back.",
+                                ButtonHelperHeroes.getSecondaryButtons(game));
+                    }
+
+                    if (winningR != null
                             && (specificVote.contains("Rider")
                                     || (winningR.hasAbility("future_sight")
                                             && game.getStoredValue("executiveOrder")
@@ -1122,16 +1134,19 @@ public final class AgendaHelper {
                         }
                         if (specificVote.contains("Frontier Rider")) {
                             ButtonHelperStats.replenishComms(event, game, winningR, true);
-                            List<Button> buttons = ButtonHelperActionCards.getFrontierTokenButtons(game, winningR);
                             String message = identity
                                     + ", due to having a winning _Frontier Rider_, your commodities have been replenished"
                                     + " and you may explore a frontier token on the game board.";
-                            if (buttons.isEmpty()) {
+                            // Emptiness must be judged on the raw list: the display list always carries a
+                            // Blind Target button in fog.
+                            if (!ButtonHelperActionCards.hasFrontierTokenTargets(game, winningR)) {
                                 MessageHelper.sendMessageToChannel(
                                         channel, message + " There are no frontier tokens available to explore.");
                             } else {
                                 MessageHelper.sendMessageToChannelWithButtons(
-                                        channel, message + " Choose the system you wish to explore.", buttons);
+                                        channel,
+                                        message + " Choose the system you wish to explore.",
+                                        ButtonHelperActionCards.getFrontierTokenButtons(game, winningR));
                             }
                         }
                         if (specificVote.contains("Relic Rider")) {
@@ -1140,11 +1155,19 @@ public final class AgendaHelper {
                                     identity + " due to having a winning _Relic Rider_, you have gained a Relic.");
                             RelicHelper.drawRelicAndNotify(winningR, event, game);
                         }
-                        if (specificVote.contains("Exploration Rider")) {
+                        if (specificVote.contains("Exploration Rider (LL)")) {
+                            String message = identity
+                                    + ", you have a winning _Exploration Rider_. Choose one controlled planet of each trait to explore.";
+                            MessageHelper.sendMessageToChannel(channel, message);
+                            ExplorationRiderLLButtonHandler.offerReward(game, winningR);
+                        } else if (specificVote.contains("Exploration Rider")) {
                             String message = identity
                                     + ", you have a winning _Exploration Rider_. Choose a non-cultural planet to explore.";
                             MessageHelper.sendMessageToChannel(channel, message);
                             ButtonHelperActionCards.sendExplorationRiderButtons(winningR, game, 3, Set.of());
+                        }
+                        if (specificVote.contains("Transit Rider")) {
+                            TransitRiderLLButtonHandler.offerReward(game, winningR);
                         }
                         if (specificVote.contains("Radiance")) {
                             List<Tile> tiles = CheckUnitContainmentService.getTilesContainingPlayersUnits(
@@ -1616,6 +1639,10 @@ public final class AgendaHelper {
                         AddUnitService.addUnits(event, tile, game, player.getColor(), "1 infantry " + planet);
                         MessageHelper.sendMessageToChannel(player.getCorrectChannel(), msg);
                     }
+                    if (uH.getTokenList().contains("attachment_polymorphism.png")
+                            && FoWHelper.playerHasShipsInSystem(player, game.getTileFromPlanet(planet))) {
+                        LostLegciesExploreHandler.offerPolymorphism(event, game, player, planet);
+                    }
                 }
             }
             if (thing.contains("dsghotg") && !prevoting) {
@@ -1670,6 +1697,10 @@ public final class AgendaHelper {
                                         + " due to the _Arcane Citadel_.";
                                 AddUnitService.addUnits(event, tile, game, player.getColor(), "1 infantry " + planet);
                                 MessageHelper.sendMessageToChannel(player.getCorrectChannel(), msg);
+                            }
+                            if (uH.getTokenList().contains("attachment_polymorphism.png")
+                                    && FoWHelper.playerHasShipsInSystem(player, game.getTileFromPlanet(planet))) {
+                                LostLegciesExploreHandler.offerPolymorphism(event, game, player, planet);
                             }
                         }
                     }
@@ -1732,7 +1763,6 @@ public final class AgendaHelper {
                 voteAmount++;
             }
         }
-        voteAmount += TaLeadersHandler.getLenPredeclaredVoteBonus(game, player, planet);
         return voteAmount;
     }
 
@@ -1757,8 +1787,7 @@ public final class AgendaHelper {
             if (voteAmount != 0) {
                 Button button = Buttons.gray(
                         "exhaustForVotes_planet_" + planet,
-                        planetNameProper + " (" + voteAmount + ")"
-                                + TaLeadersHandler.getLenVoteLabelSuffix(game, player, planet),
+                        planetNameProper + " (" + voteAmount + ")",
                         PlanetEmojis.getPlanetEmoji(planet));
                 planetButtons.add(button);
             }
@@ -1849,7 +1878,7 @@ public final class AgendaHelper {
     }
 
     @ButtonHandler("refreshAgenda")
-    public static void refreshAgenda(Game game) {
+    public static void refreshAgenda(Game game, ButtonInteractionEvent event) {
         String agendaDetails = game.getCurrentAgendaInfo();
         String agendaID = "CL";
         if (StringUtils.countMatches(agendaDetails, "_") > 2) {
@@ -1890,6 +1919,7 @@ public final class AgendaHelper {
             MessageHelper.sendMessageToChannel(
                     game.getMainGameChannel(), AgendaSummaryHelper.getSummaryOfVotes(game, true));
         }
+        ButtonHelper.deleteMessage(event);
     }
 
     @ButtonHandler("proceedToFinalizingVote")
@@ -2033,7 +2063,12 @@ public final class AgendaHelper {
         return winner.toString();
     }
 
-    static String getAgendaOutcomeName(Game game, String outcome, boolean capitalize) {
+    /**
+     * Renders an outcome key for display. For a planet outcome this is the static planet name from the model,
+     * with no live resources/influence and no [DMZ] marker - which is why it is the safe way to name an
+     * elected planet in a channel that not every reader can see the planet in.
+     */
+    public static String getAgendaOutcomeName(Game game, String outcome, boolean capitalize) {
         String agendaDetails = game.getCurrentAgendaInfo();
         if (StringUtils.countMatches(agendaDetails, "_") > 1) {
             agendaDetails = agendaDetails.split("_")[1];
@@ -2332,7 +2367,7 @@ public final class AgendaHelper {
 
         // Dreaming Throne Commander
         if (game.playerHasLeaderUnlockedOrAlliance(player, "dreamcommander")) {
-            int count = DreamButtonHandler.getDreamCommanderVoteCount(game, player);
+            int count = DreamLeadersHandler.getDreamCommanderVoteCount(game, player);
             additionalVotesAndSources.put(FactionEmojis.dream + "Dreaming Throne Commander", count);
         }
 
@@ -2615,7 +2650,6 @@ public final class AgendaHelper {
             if (aCount == 1) {
                 GMService.logActivity(game, "**Agenda** Phase for Round " + game.getRound() + " started.", true);
                 FowCommunicationThreadService.checkAllCommThreads(game);
-                MyrrAbilitiesHandler.offerFactoryLeaseProduction(game);
             }
         } else {
             action = true;

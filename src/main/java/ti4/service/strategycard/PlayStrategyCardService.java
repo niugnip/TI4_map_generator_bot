@@ -16,15 +16,17 @@ import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
+import ti4.discord.interactions.buttons.handlers.actioncards.theodisi.AdministrativeExemptionLLButtonHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaAbilityHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Verydith.VerydithAbilitiesHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Verydith.VerydithPromissoryHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Verydith.VerydithTechHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.onyxxa.OnyxxaBreakthroughHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.onyxxa.OnyxxaLeaderHandler;
 import ti4.game.Game;
+import ti4.game.Planet;
 import ti4.game.Player;
 import ti4.game.Tile;
+import ti4.game.UnitHolder;
 import ti4.helpers.ActionCardHelper;
 import ti4.helpers.ButtonHelper;
 import ti4.helpers.ButtonHelperAbilities;
@@ -56,6 +58,7 @@ import ti4.service.fow.RiftSetModeService;
 import ti4.service.game.SpeakerService;
 import ti4.service.turn.EndTurnService;
 import ti4.service.turn.StartTurnService;
+import ti4.service.unit.AddUnitService;
 import ti4.service.unit.CheckUnitContainmentService;
 import ti4.spring.service.gameevent.GameEventService;
 import ti4.spring.service.gameevent.GameEventType;
@@ -377,6 +380,12 @@ public class PlayStrategyCardService {
                             player3.getRepresentation()
                                     + ", you have been elected as Minister of Sciences, so you do not need to pay resources to research off of technology. ");
                 }
+                if (player3 != player && player3.hasLeaderUnlocked("netrunnerscommander")) {
+                    MessageHelper.sendMessageToChannel(
+                            player3.getCardsInfoThread(),
+                            player3.getRepresentationUnfogged()
+                                    + ", Tek Mir-un, the Netrunners commander, lets you choose to follow **Technology** without spending a command token. Please select Get a Technology rather than Spend A Strategy Token.");
+                }
             }
         }
 
@@ -456,6 +465,62 @@ public class PlayStrategyCardService {
                         "Use Fleet Logistics When All Have Reacted"));
             }
         }
+
+        if (scToPlay == 2 && "evenfall_sc".equalsIgnoreCase(game.getScSetID())) {
+            for (String planet : player.getPlanets()) {
+                Tile tile = game.getTileFromPlanet(planet);
+                Planet uH = game.getUnitHolderFromPlanet(planet);
+                if (tile != null && uH != null && uH.isLegendary()) {
+                    List<Button> buttons = new ArrayList<>();
+                    for (Player p2 : game.getRealPlayersExcludingThis(player)) {
+                        buttons.add(Buttons.gray(
+                                player.getFactionCheckerPrefix() + "signalJammingStep4_" + p2.getFaction() + "_"
+                                        + tile.getPosition(),
+                                p2.getFactionNameOrColor()));
+                    }
+                    MessageHelper.sendMessageToChannel(
+                            player.getCorrectChannel(),
+                            player.getRepresentation() + " choose whose command counter should go in "
+                                    + tile.getRepresentationForButtons(),
+                            buttons);
+                }
+            }
+        }
+
+        if (scToPlay == 4
+                && "evenfall_sc".equalsIgnoreCase(game.getScSetID())
+                && ButtonHelper.doesPlayerControlRexOrOpponentHS(player, game)) {
+            String warfareDone2 = player.getRepresentationUnfogged()
+                    + ", a mech and 3 infantry have been added to every home system planet you own and rex.";
+            MessageHelper.sendMessageToChannel(player.getCorrectChannel(), warfareDone2);
+            for (Tile tile : game.getTileMap().values()) {
+                if (tile.isHomeSystem(game)) {
+                    for (UnitHolder planet : tile.getPlanetUnitHolders()) {
+                        if (player.getPlanets().contains(planet.getName())) {
+                            AddUnitService.addUnits(
+                                    event,
+                                    tile,
+                                    game,
+                                    player.getColor(),
+                                    "3 inf " + planet.getName() + ", mech " + planet.getName());
+                        }
+                    }
+                }
+                if (tile.isMecatol(game)) {
+                    for (UnitHolder planet : tile.getPlanetUnitHolders()) {
+                        if (player.getPlanets().contains(planet.getName())
+                                && !"avernus".equalsIgnoreCase(planet.getName())) {
+                            AddUnitService.addUnits(
+                                    event,
+                                    tile,
+                                    game,
+                                    player.getColor(),
+                                    "3 inf " + planet.getName() + ", mech " + planet.getName());
+                        }
+                    }
+                }
+            }
+        }
         MessageHelper.sendMessageToChannelWithButtons(
                 event.getMessageChannel(), "Use the buttons to end turn or take another action.", conclusionButtons);
         if (!game.isHomebrewSCMode()
@@ -511,9 +576,6 @@ public class PlayStrategyCardService {
                     }
                 }
             }
-        }
-        if (player.hasAbility("mandate_of_presence") && !isOverrule) {
-            VerydithAbilitiesHandler.getMandateButtons(event, player, game);
         }
         if (player.hasRelicReady("lunar_eclipse_moonphase")
                 && AeternaAbilityHandler.canReturnCapturedNeutralUnits(game, player, 2)) {
@@ -607,6 +669,7 @@ public class PlayStrategyCardService {
                         && !p2.hasRelicReady("emelpar")
                         && !p2.hasUnexhaustedLeader("mahactagent")
                         && !p2.hasUnexhaustedLeader("yssarilagent")
+                        && !AdministrativeExemptionLLButtonHandler.hasExemption(game, p2)
                         && !MindsieveService.canUseMindsieve(p2, player, scModel)
                         && !StoneEmbraceService.canUseStoneEmbrace(p2, player, scModel)
                         && scToPlay != 1) {
@@ -1220,14 +1283,19 @@ public class PlayStrategyCardService {
      */
     private static List<Button> getMonumentsConstructionButtons(int sc, Game game) {
         Button followButton = Buttons.green("sc_follow_" + sc, "Spend A Strategy Token");
-        Button sdButton = Buttons.green("construction_spacedock", "Place 1 space dock", UnitEmojis.spacedock);
-        Button pdsButton = Buttons.green("construction_pds", "Place 1 PDS", UnitEmojis.pds);
-        Button monumentButton = Buttons.red("construction_monument", "Place 1 Monument", UnitEmojis.Monument);
+        Button buildButton = Buttons.green("constructionPrimary_produce", "[Primary] Use Production");
+        Button sdButton = Buttons.green("construction_spacedock", "Place A Space Dock", UnitEmojis.spacedock);
+        Button pdsButton = Buttons.green("construction_pds", "Place a PDS", UnitEmojis.pds);
+        Button monumentButton = Buttons.green("construction_monument", "Place 1 Monument", UnitEmojis.Monument);
         Button noFollowButton = Buttons.blue("sc_no_follow_" + sc, "Not Following");
+        List<Button> buttons = new ArrayList<>(List.of(followButton, buildButton, sdButton, pdsButton, monumentButton));
         if (game.isFacilitiesMode()) {
-            Button facilityButton = Buttons.green("construction_facility", "Place A Facility");
-            return List.of(followButton, sdButton, pdsButton, monumentButton, facilityButton, noFollowButton);
+            buttons.add(Buttons.green("construction_facility", "Place A Facility"));
         }
-        return List.of(followButton, sdButton, pdsButton, monumentButton, noFollowButton);
+        if (game.isMonumentToTheAgesMode()) {
+            buttons.add(Buttons.green("construction_agesmonument", "Place A Monument (Cost 5 TG)"));
+        }
+        buttons.add(noFollowButton);
+        return buttons;
     }
 }

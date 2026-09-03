@@ -56,6 +56,9 @@ public class Source {
         gamma,
         black_spectrum,
         addiction,
+        expanded_fracture,
+        muaat_mania,
+        erwans_gambit,
 
         // async homebrew
         draft,

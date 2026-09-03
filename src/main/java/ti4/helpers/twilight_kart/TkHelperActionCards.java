@@ -45,6 +45,7 @@ import ti4.service.VeiledHeartService;
 import ti4.service.emoji.ExploreEmojis;
 import ti4.service.emoji.MiscEmojis;
 import ti4.service.emoji.UnitEmojis;
+import ti4.service.fow.PlanetTargetService;
 import ti4.service.regex.RegexService;
 import ti4.service.tech.PlayerTechService;
 import ti4.service.unit.AddUnitService;
@@ -221,7 +222,7 @@ public class TkHelperActionCards {
             player.setTg(player.getTg() - 2);
             String message = player.getRepresentation() + " paid some mercenaries 2 trade goods to post up at "
                     + Helper.getPlanetRepresentation(planet, game) + ".";
-            if (tile != null && tile.getPosition().contains("frac")) {
+            if (tile != null && tile.isFracture()) {
                 Planet uh = game.getUnitHolderFromPlanet(planet);
                 if (uh != null) {
                     uh.addToken("token_relictoken.png");
@@ -243,6 +244,13 @@ public class TkHelperActionCards {
         String regex = "resolveTkConscript_" + RegexHelper.posRegex();
         RegexService.runMatcher(regex, buttonID, matcher -> {
             Tile tile = game.getTileByPosition(matcher.group("pos"));
+            // posRegex accepts any bot-legal position, not only positions on this map, so a blind-typed
+            // target can reach here with no tile - and beginPirates' own emptyTile rule (no player ships,
+            // not a hyperlane, not a home system) was never re-checked here at all.
+            if (!TeHelperActionCards.legalPirateTarget(game, tile, "resolveTkConscript")) {
+                PlanetTargetService.fizzle(event, player);
+                return;
+            }
             TeHelperActionCards.resolvePiratesGeneric(event, game, player, tile, "dd, 2 ff");
 
             String message = player.getRepresentation() + " conscripted some pirates to post up at "

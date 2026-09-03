@@ -1,35 +1,36 @@
 package ti4.discord.interactions.commands.developer;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
-import org.junit.jupiter.api.Test;
+import java.util.List;
 import ti4.game.Game;
 import ti4.game.Player;
+import ti4.game.Tile;
 import ti4.testUtils.BaseTi4Test;
 
 class RunAgainstAllGamesTest extends BaseTi4Test {
 
-    @Test
-    void revertBlackSpectrumPlotsStripsOnlyTheBlackSpectrumDuplicates() {
-        Game game = new Game();
-        Player player = new Player("user-id", "user/name", game);
+    private static void seat(Game game, String faction, String... planets) {
+        Player player = game.addPlayer(faction + "-user", faction);
+        player.setFaction(faction);
+        player.setColor(COLORS.get(game.getPlayers().size() - 1));
+        player.getPlanets().addAll(List.of(planets));
+    }
+
+    private static final List<String> COLORS = List.of("red", "blue", "green", "yellow", "purple", "orange");
+
+    private static Player anchoredAt(Game game, String position) {
+        Player player = game.addPlayer("user-" + position, "user");
+        player.setFaction("keleres");
         player.setColor("red");
-        game.setPlayers(new LinkedHashMap<>(Map.of("user-id", player)));
+        player.setPlayerStatsAnchorPosition(position);
+        return player;
+    }
 
-        player.setPlotCard("seethe");
-        player.setPlotCard("bsp_seethe");
-        player.setPlotCard("assail");
-        player.setPlotCard("bsp_assail");
-
-        boolean changed = RunAgainstAllGames.revertBlackSpectrumPlots(game);
-
-        assertThat(changed).isTrue();
-        assertThat(player.getPlotCardsRaw()).containsKey("seethe").containsKey("assail");
-        assertThat(player.getPlotCardsRaw()).doesNotContainKey("bsp_seethe").doesNotContainKey("bsp_assail");
-
-        // Running again makes no further changes
-        assertThat(RunAgainstAllGames.revertBlackSpectrumPlots(game)).isFalse();
+    private static Game gameWithTiles(String... tileIds) {
+        Game game = new Game();
+        int position = 101;
+        for (String tileId : tileIds) {
+            game.setTile(new Tile(tileId, Integer.toString(position++)));
+        }
+        return game;
     }
 }

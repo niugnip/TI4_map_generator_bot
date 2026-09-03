@@ -14,17 +14,21 @@ import org.apache.commons.lang3.function.Consumers;
 import software.amazon.awssdk.utils.StringUtils;
 import ti4.contest.replay.service.CombatReplayService;
 import ti4.discord.interactions.buttons.Buttons;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.beans.ashen.AshenBreakthroughHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Aeterna.AeternaAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Arcanum.ArcanumAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Arcanum.ArcanumPrimordialTechHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Arcanum.ArcanumTechHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Ardentia.ArdentiaAbilityHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Kairn.KairnBreakthroughHandler;
-import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Oblivion.*;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Oblivion.OblivionTechHandler;
+import ti4.discord.interactions.buttons.handlers.faction.homebrew.theodisi.Oblivion.OblivionUnitHandler;
 import ti4.discord.interactions.buttons.handlers.faction.homebrew.whispers.tyris.TyrisLeaderHandler;
+import ti4.discord.interactions.buttons.handlers.relics.theodisi.LostLegaciesRelicHandler;
 import ti4.discord.interactions.routing.ButtonHandler;
 import ti4.game.Game;
 import ti4.game.Leader;
+import ti4.game.Planet;
 import ti4.game.Player;
 import ti4.game.Tile;
 import ti4.helpers.Units.UnitType;
@@ -40,14 +44,21 @@ import ti4.model.RelicModel;
 import ti4.model.TechnologyModel;
 import ti4.service.agenda.IsPlayerElectedService;
 import ti4.service.breakthrough.DeepgloomService;
+import ti4.service.emoji.ExploreEmojis;
 import ti4.service.emoji.FactionEmojis;
 import ti4.service.emoji.LeaderEmojis;
+import ti4.service.emoji.MiscEmojis;
 import ti4.service.emoji.TI4Emoji;
 import ti4.service.emoji.UnitEmojis;
+import ti4.service.fow.BlindSelectionService;
+import ti4.service.fow.PlanetTargetService;
+import ti4.service.fow.PlanetTargetService.PlanetTargetSpec;
 import ti4.service.leader.ExhaustLeaderService;
 import ti4.service.leader.PlayHeroService;
 import ti4.service.leader.UnlockLeaderService;
 import ti4.service.relic.BookOfLatviniaService;
+import ti4.service.relic.MutagenService;
+import ti4.service.relic.QuantumEntanglerService;
 import ti4.service.relic.SilverFlameService;
 import ti4.service.turn.StartTurnService;
 import ti4.service.unit.AddUnitService;
@@ -98,6 +109,11 @@ public class ComponentActionHelper {
                 if ("lgf".equals(tech) && !p1.controlsMecatol(false)) {
                     continue;
                 }
+                if ("vtx".equals(tech)
+                        && ButtonHelperFactionSpecific.getUnitButtonsForVortex(p1, game)
+                                .isEmpty()) {
+                    continue;
+                }
                 if ("tf-fabrication".equalsIgnoreCase(tech)
                         || "tf-orbitaldrop".equalsIgnoreCase(tech)
                         || "tf-mantlecracking".equalsIgnoreCase(tech)
@@ -126,6 +142,13 @@ public class ComponentActionHelper {
         if (ButtonHelper.getNumberOfStarCharts(p1) > 1) {
             compButtons.add(Buttons.red(factionChecker + prefix + "doStarCharts_", "Purge 2 Star Charts"));
         }
+        if (MutagenService.getMutagenCount(p1) > 1) {
+            compButtons.add(Buttons.red(factionChecker + prefix + "doMutagens_", "Purge 2 Mutagens"));
+        }
+        if (p1.hasRelic("volatile_mutagenics")) {
+            compButtons.add(
+                    Buttons.red(factionChecker + prefix + "doVolatileMutagenics_", "Purge Volatile Mutagenics"));
+        }
 
         if (game.isTotalWarMode() && ButtonHelperActionCards.getAllCommsInHS(p1, game) > 9) {
             Button tButton =
@@ -148,6 +171,7 @@ public class ComponentActionHelper {
                                             .anyMatch(otherPlayer -> otherPlayer != p1
                                                     && !ButtonHelper.getTilesWithYourCC(otherPlayer, game, event)
                                                             .isEmpty());
+                                case "ashenbt" -> AshenBreakthroughHandler.hasEligibleTarget(game, p1);
                                 case "saarbt" ->
                                     game.getTileMap().values().stream()
                                             .filter(Tile::isAsteroidField)
@@ -346,9 +370,15 @@ public class ComponentActionHelper {
                 MessageHelper.sendMessageToChannel(event.getMessageChannel(), "Could not find that relic.");
                 continue;
             }
+            if ("quantum_entangler".equalsIgnoreCase(relic)
+                    && (game.getAllRelics().size() < 3 || game.getRealPlayers().size() < 2)) {
+                continue;
+            }
 
             if (Constants.ENIGMATIC_DEVICE.equalsIgnoreCase(relic)
                     || (!relic.contains("starchart")
+                            && !MutagenService.isMutagen(relic)
+                            && !"volatile_mutagenics".equals(relic)
                             && (relicData.getText().contains("Action:")
                                     || relicData.getText().contains("ACTION:")))) {
                 Button rButton;
@@ -373,12 +403,16 @@ public class ComponentActionHelper {
                             "absol_jr",
                             "circletofthevoid",
                             "endurance_steroids",
-                            "the_incursion_gate");
+                            "the_incursion_gate",
+                            "diplomaticboon",
+                            "ancient_radar",
+                            "horn_of_the_abyss");
                     if (exhaustRelics.contains(relic.toLowerCase())) {
                         if (!p1.getExhaustedRelics().contains(relic)) {
+                            // Availability probe only - must not use the filtered builder, which appends a
+                            // Blind Target button (never empty in fog) and used to clobber shared state.
                             if (!"circletofthevoid".equalsIgnoreCase(relic)
-                                    || !ButtonHelperActionCards.getCircletButtons(game, p1)
-                                            .isEmpty()) {
+                                    || ButtonHelperActionCards.hasCircletTargets(game, p1)) {
                                 rButton = Buttons.blue(
                                         factionChecker + prefix + "relic_" + relic, "Exhaust " + relicData.getName());
                             } else {
@@ -431,6 +465,11 @@ public class ComponentActionHelper {
             }
         }
 
+        if (game.isErwansGambitMode() && getTilePlayerCanTurnInBounty(game, p1) != null) {
+            compButtons.add(
+                    Buttons.green(factionChecker + prefix + "turnInBounty", "Turn In Bounty", UnitEmojis.Galvanized));
+        }
+
         // Abilities
         if (p1.hasAbility("star_forge")
                 && (p1.getStrategicCC() > 0 || p1.hasRelicReady("emelpar"))
@@ -449,9 +488,11 @@ public class ComponentActionHelper {
             compButtons.add(abilityButton);
         }
         if (p1.hasAbility("orbital_drop") && (p1.getStrategicCC() > 0 || p1.hasRelicReady("emelpar"))) {
-            Button abilityButton =
-                    Buttons.green(factionChecker + prefix + "ability_orbitalDrop", "Orbital Drop", FactionEmojis.Sol);
-            compButtons.add(abilityButton);
+            compButtons.add(
+                    Buttons.green(factionChecker + prefix + "ability_orbitalDrop", "Orbital Drop", FactionEmojis.Sol));
+        }
+        if (p1.hasAbility("contraband_auction") && !p1.getExhaustedAbilities().contains("contraband_auction")) {
+            compButtons.add(Buttons.green(factionChecker + prefix + "ability_Contraband", "Contraband Auction"));
         }
         if (game.playerHasLeaderUnlockedOrAlliance(p1, "tyriscommander")) {
             TyrisLeaderHandler.addCommanderActionButton(p1, factionChecker, prefix, compButtons);
@@ -611,7 +652,8 @@ public class ComponentActionHelper {
                             "kryxosagent",
                             "ardentiaagent",
                             "aeternaagent",
-                            "veyloragent");
+                            "veyloragent",
+                            "taagent");
                     if (leadersThatNeedSpecialSelection.contains(buttonID)) {
                         List<Button> buttons = ButtonHelper.getButtonsForAgentSelection(game, buttonID);
                         String message = p1.getRepresentationUnfogged() + ", please choose the user of the agent.";
@@ -670,6 +712,12 @@ public class ComponentActionHelper {
                     List<Button> buttons = ButtonHelperAbilities.getSuperWeaponButtonsPart1(p1, game);
                     String message =
                             p1.getRepresentation() + ", please choose the planet you wish to put a Superweapon on.";
+                    MessageHelper.sendMessageToChannelWithButtons(event.getMessageChannel(), message, buttons);
+                } else if ("Contraband".equalsIgnoreCase(buttonID)) {
+                    String message = "Please choose whether you want to put up a relic or faction tech for action.";
+                    List<Button> buttons = new ArrayList<>();
+                    buttons.add(Buttons.green("beginAuction_relic", "Relic", ExploreEmojis.Relic));
+                    buttons.add(Buttons.blue("beginAuction_tech", "Faction Tech"));
                     MessageHelper.sendMessageToChannelWithButtons(event.getMessageChannel(), message, buttons);
                 } else if ("orbitalDrop".equalsIgnoreCase(buttonID)) {
                     String successMessage = p1.getFactionEmoji() + " spent 1 strategy token using " + FactionEmojis.Sol
@@ -756,26 +804,28 @@ public class ComponentActionHelper {
                     MessageHelper.sendMessageToChannelWithButtons(event.getChannel(), message3, buttons);
                     String message2 = "Please choose the fragment you wish to purge. ";
                     List<Button> purgeFragButtons = new ArrayList<>();
-                    if (p1.getCrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.CULTURAL) > 0) {
                         Button transact =
                                 Buttons.blue(factionChecker + "purge_Frags_CRF_1", "Purge 1 Cultural Fragment");
                         purgeFragButtons.add(transact);
                     }
-                    if (p1.getIrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.INDUSTRIAL) > 0) {
                         Button transact =
                                 Buttons.green(factionChecker + "purge_Frags_IRF_1", "Purge 1 Industrial Fragment");
                         purgeFragButtons.add(transact);
                     }
-                    if (p1.getHrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.HAZARDOUS) > 0) {
                         Button transact =
                                 Buttons.red(factionChecker + "purge_Frags_HRF_1", "Purge 1 Hazardous Fragment");
                         purgeFragButtons.add(transact);
                     }
-                    if (p1.getUrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.FRONTIER) > 0) {
                         Button transact =
                                 Buttons.gray(factionChecker + "purge_Frags_URF_1", "Purge 1 Frontier Fragment");
                         purgeFragButtons.add(transact);
                     }
+                    purgeFragButtons.addAll(
+                            ButtonHelperExplore.getSupermassiveFragmentPurgeButtons(p1, factionChecker));
                     Button transact3 = Buttons.red(factionChecker + "deleteButtons", "Done Purging");
                     purgeFragButtons.add(transact3);
                     MessageHelper.sendMessageToChannelWithButtons(
@@ -786,26 +836,28 @@ public class ComponentActionHelper {
                 } else if ("fabrication".equalsIgnoreCase(buttonID)) {
                     String message = "Please choose the fragment you wish to purge. ";
                     List<Button> purgeFragButtons = new ArrayList<>();
-                    if (p1.getCrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.CULTURAL) > 0) {
                         Button transact =
                                 Buttons.blue(factionChecker + "purge_Frags_CRF_1", "Purge 1 Cultural Fragment");
                         purgeFragButtons.add(transact);
                     }
-                    if (p1.getIrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.INDUSTRIAL) > 0) {
                         Button transact =
                                 Buttons.green(factionChecker + "purge_Frags_IRF_1", "Purge 1 Industrial Fragment");
                         purgeFragButtons.add(transact);
                     }
-                    if (p1.getHrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.HAZARDOUS) > 0) {
                         Button transact =
                                 Buttons.red(factionChecker + "purge_Frags_HRF_1", "Purge 1 Hazardous Fragment");
                         purgeFragButtons.add(transact);
                     }
-                    if (p1.getUrf() > 0) {
+                    if (ButtonHelperExplore.getNormalFragmentCount(p1, Constants.FRONTIER) > 0) {
                         Button transact =
                                 Buttons.gray(factionChecker + "purge_Frags_URF_1", "Purge 1 Frontier Fragment");
                         purgeFragButtons.add(transact);
                     }
+                    purgeFragButtons.addAll(
+                            ButtonHelperExplore.getSupermassiveFragmentPurgeButtons(p1, factionChecker));
                     Button transact2 = Buttons.green(factionChecker + "gain_CC", "Gain 1 Command Token");
                     purgeFragButtons.add(transact2);
                     Button transact3 =
@@ -860,7 +912,15 @@ public class ComponentActionHelper {
             case "getRelic" -> {
                 String message = "Please choose the fragments you wish to purge. ";
                 List<Button> purgeFragButtons = new ArrayList<>();
-                int numToBeat = 2 - p1.getUrf();
+                int culturalFragments = ButtonHelperExplore.getNormalFragmentCount(p1, Constants.CULTURAL);
+                int industrialFragments = ButtonHelperExplore.getNormalFragmentCount(p1, Constants.INDUSTRIAL);
+                int hazardousFragments = ButtonHelperExplore.getNormalFragmentCount(p1, Constants.HAZARDOUS);
+                int frontierFragments = ButtonHelperExplore.getNormalFragmentCount(p1, Constants.FRONTIER);
+                int supermassiveCultural = ButtonHelperExplore.getSupermassiveFragmentCount(p1, Constants.CULTURAL);
+                int supermassiveIndustrial = ButtonHelperExplore.getSupermassiveFragmentCount(p1, Constants.INDUSTRIAL);
+                int supermassiveHazardous = ButtonHelperExplore.getSupermassiveFragmentCount(p1, Constants.HAZARDOUS);
+                int supermassiveFrontier = ButtonHelperExplore.getSupermassiveFragmentCount(p1, Constants.FRONTIER);
+                int numToBeat = 2 - frontierFragments - supermassiveFrontier;
                 if (game.isAgeOfExplorationMode()) {
                     numToBeat -= 1;
                 }
@@ -872,35 +932,42 @@ public class ComponentActionHelper {
                         purgeFragButtons.add(transact);
                     }
                 }
-                if (p1.getCrf() > numToBeat) {
-                    for (int x = numToBeat + 1; (x < p1.getCrf() + 1 && x < 4); x++) {
+                if (culturalFragments + supermassiveCultural > numToBeat) {
+                    for (int x = Math.max(1, numToBeat - supermassiveCultural + 1);
+                            (x < culturalFragments + 1 && x < 4);
+                            x++) {
                         Button transact =
                                 Buttons.blue(factionChecker + "purge_Frags_CRF_" + x, "Cultural Fragments (" + x + ")");
                         purgeFragButtons.add(transact);
                     }
                 }
-                if (p1.getIrf() > numToBeat) {
-                    for (int x = numToBeat + 1; (x < p1.getIrf() + 1 && x < 4); x++) {
+                if (industrialFragments + supermassiveIndustrial > numToBeat) {
+                    for (int x = Math.max(1, numToBeat - supermassiveIndustrial + 1);
+                            (x < industrialFragments + 1 && x < 4);
+                            x++) {
                         Button transact = Buttons.green(
                                 factionChecker + "purge_Frags_IRF_" + x, "Industrial Fragments (" + x + ")");
                         purgeFragButtons.add(transact);
                     }
                 }
-                if (p1.getHrf() > numToBeat) {
-                    for (int x = numToBeat + 1; (x < p1.getHrf() + 1 && x < 4); x++) {
+                if (hazardousFragments + supermassiveHazardous > numToBeat) {
+                    for (int x = Math.max(1, numToBeat - supermassiveHazardous + 1);
+                            (x < hazardousFragments + 1 && x < 4);
+                            x++) {
                         Button transact =
                                 Buttons.red(factionChecker + "purge_Frags_HRF_" + x, "Hazardous Fragments (" + x + ")");
                         purgeFragButtons.add(transact);
                     }
                 }
 
-                if (p1.getUrf() > 0) {
-                    for (int x = 1; x < p1.getUrf() + 1; x++) {
+                if (frontierFragments > 0) {
+                    for (int x = 1; x < frontierFragments + 1; x++) {
                         Button transact =
                                 Buttons.gray(factionChecker + "purge_Frags_URF_" + x, "Frontier Fragments (" + x + ")");
                         purgeFragButtons.add(transact);
                     }
                 }
+                purgeFragButtons.addAll(ButtonHelperExplore.getSupermassiveFragmentPurgeButtons(p1, factionChecker));
                 Button transact2 = Buttons.red(factionChecker + "drawRelicFromFrag", "Finish Purging and Draw Relic");
                 if (p1.hasAbility("a_new_edifice")) {
                     transact2 = Buttons.red(factionChecker + "drawRelicFromFrag", "Finish Purging and Explore");
@@ -951,6 +1018,8 @@ public class ComponentActionHelper {
                 ButtonHelper.purge2StarCharters(p1, game);
                 DiscordantStarsHelper.drawBlueBackTiles(event, game, p1, 1);
             }
+            case "doMutagens" -> MutagenService.resolveMutagenPurge(event, game, p1, false);
+            case "doVolatileMutagenics" -> MutagenService.resolveMutagenPurge(event, game, p1, true);
             case "stellarAtomicsAction" -> {
                 game.unscorePublicObjective(
                         p1.getUserID(), game.getRevealedPublicObjectives().get("Stellar Atomics"));
@@ -958,13 +1027,15 @@ public class ComponentActionHelper {
                         event.getMessageChannel(),
                         p1.getFactionEmoji() + " removed their token from the _Stellar Atomics_ card.");
                 List<Button> buttons = new ArrayList<>();
-                for (Player p2 : game.getRealPlayersNDummies()) {
-                    if (p2 == p1) {
-                        continue;
-                    }
-                    if (game.isFowMode()) {
-                        buttons.add(Buttons.gray("atomicsStep2_" + p2.getFaction(), p2.getColor()));
-                    } else {
+                if (game.isFowMode()) {
+                    // The player step was already fog-aware, but step 2 then listed that player's whole
+                    // holding list. Skip it and offer the planets this player knows about instead.
+                    buttons = PlanetTargetService.targetButtons(game, p1, atomicsSpec(game), buttons);
+                } else {
+                    for (Player p2 : game.getRealPlayersNDummies()) {
+                        if (p2 == p1) {
+                            continue;
+                        }
                         Button button = Buttons.gray(
                                 "atomicsStep2_" + p2.getFaction(),
                                 p2.getFactionModel().getShortName());
@@ -1057,6 +1128,18 @@ public class ComponentActionHelper {
                 game.scorePublicObjective(p1.getUserID(), poIndex);
                 Helper.checkEndGame(game, p1);
             }
+            case "turnInBounty" -> {
+                MessageHelper.sendMessageToChannel(
+                        event.getMessageChannel(),
+                        p1.getFactionEmoji() + " has decided to turn in a bounty for 1 VP or 6 Trade goods.");
+                List<Button> buttons = new ArrayList<>();
+                buttons.add(Buttons.blue("redeemBounty_6tg", "Gain 6 Tg", MiscEmojis.tg));
+                buttons.add(Buttons.green("redeemBounty_vp", "Gain Victory Point"));
+                MessageHelper.sendMessageToChannel(
+                        p1.getCorrectChannel(), p1.getRepresentation() + " choose your reward.", buttons);
+                Tile tile = getTilePlayerCanTurnInBounty(game, p1);
+                tile.getSpaceUnitHolder().removeAllGalvanize();
+            }
         }
 
         if (!firstPart.contains("ability") && !firstPart.contains("getRelic") && !firstPart.contains("pn")) {
@@ -1065,15 +1148,71 @@ public class ComponentActionHelper {
         ButtonHelper.deleteMessage(event);
     }
 
+    /** Shared by the fog list and by resolution, so a blind-typed target obeys the same rules. */
+    public static PlanetTargetSpec atomicsSpec(Game game) {
+        return PlanetTargetSpec.of("atomicsStep3_" + BlindSelectionService.TBD_FACTION)
+                .excludingSelf()
+                .where(p -> !p.isSpaceStation(game)
+                        && game.getTileFromPlanet(p.getName()) != null
+                        && !game.getTileFromPlanet(p.getName()).isHomeSystem(game));
+    }
+
+    // Non-fog only - the fog path goes straight from the component action to Step 3.
+    public static Tile getTilePlayerCanTurnInBounty(Game game, Player player) {
+        Tile tile = null;
+        for (Tile tile2 : game.getTileMap().values()) {
+            if (tile2.getSpaceUnitHolder().getGalvanizedUnitCount(player.getColorID()) > 0) {
+                if (tile2.isMecatol(game)
+                        || player.getHomeSystemTile() == tile2
+                        || ("sol".equalsIgnoreCase(player.getFaction())
+                                && ButtonHelper.getTilesOfPlayersSpecificUnits(game, player, UnitType.Spacedock)
+                                        .contains(tile2))) {
+                    return tile;
+                }
+            }
+        }
+
+        return tile;
+    }
+
+    @ButtonHandler("redeemBounty_")
+    public static void redeemBounty(Player p1, Game game, ButtonInteractionEvent event, String buttonID) {
+        String reward = buttonID.split("_")[1];
+        switch (reward) {
+            case "vp" -> {
+                String customPOName = "Bounty VPs (" + p1.getFaction() + ")";
+                int vp = 1;
+                if (game.getCustomPublicVP().containsKey(customPOName)) {
+                    vp = game.getCustomPublicVP().get(customPOName) + 1;
+                    game.removeCustomPO(customPOName);
+                }
+                Integer poIndex = game.addCustomPO(customPOName, vp);
+                game.scorePublicObjective(p1.getUserID(), poIndex);
+                Helper.checkEndGame(game, p1);
+                MessageHelper.sendMessageToChannel(
+                        p1.getCorrectChannel(), p1.getRepresentationNoPing() + " gained a VP.");
+            }
+            default -> {
+                p1.gainTG(6, true);
+                MessageHelper.sendMessageToChannel(
+                        p1.getCorrectChannel(), p1.getRepresentationNoPing() + " gained 6 tg.");
+            }
+        }
+        ButtonHelper.deleteMessage(event);
+    }
+
     @ButtonHandler("atomicsStep2_")
     public static void resolveAtomicsStep2(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
         Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
+        if (p2 == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
         List<Button> buttons = new ArrayList<>();
         for (String planet : p2.getPlanets()) {
             Tile tile = game.getTileFromPlanet(planet);
-            if (tile != null
-                    && !tile.isHomeSystem(game)
-                    && !game.getUnitHolderFromPlanet(planet).isSpaceStation()) {
+            Planet uH = game.getUnitHolderFromPlanet(planet);
+            if (tile != null && uH != null && !tile.isHomeSystem(game) && !uH.isSpaceStation()) {
                 buttons.add(Buttons.gray(
                         "atomicsStep3_" + p2.getFaction() + "_" + planet,
                         Helper.getPlanetRepresentation(planet, game)));
@@ -1088,8 +1227,15 @@ public class ComponentActionHelper {
 
     @ButtonHandler("atomicsStep3_")
     public static void resolveAtomicsStep3(Player player, Game game, ButtonInteractionEvent event, String buttonID) {
-        Player p2 = game.getPlayerFromColorOrFaction(buttonID.split("_")[1]);
-        String planet = buttonID.split("_")[2];
+        if (PlanetTargetService.handlePlanetPage(event, game, player, buttonID, atomicsSpec(game))) return;
+        // Spec passed so "not a home system, not a space station" is enforced for blind-typed targets too.
+        var target = PlanetTargetService.resolve(game, player, buttonID, atomicsSpec(game), null);
+        if (target == null) {
+            PlanetTargetService.fizzle(event, player);
+            return;
+        }
+        Player p2 = target.owner();
+        String planet = target.planetId();
         String planetRep = Helper.getPlanetRepresentation(planet, game);
         ButtonHelper.deleteMessage(event);
 
@@ -1134,6 +1280,14 @@ public class ComponentActionHelper {
             MessageHelper.sendMessageToChannel(
                     event.getMessageChannel(),
                     "Invalid relic or player does not have specified relic: `" + relicID + "`");
+            return;
+        }
+        if (MutagenService.isMutagen(relicID)) {
+            MutagenService.resolveMutagenPurge(event, game, player, false);
+            return;
+        }
+        if ("volatile_mutagenics".equals(relicID)) {
+            MutagenService.resolveMutagenPurge(event, game, player, true);
             return;
         }
         game.setStoredValue(
@@ -1189,6 +1343,55 @@ public class ComponentActionHelper {
                     event.getMessageChannel(),
                     "Ha! As if I'd automate something like this. Please resolve manually. Here's some exhaust buttons though.",
                     buttons);
+        } else if ("diplomaticboon".equalsIgnoreCase(relicID)) {
+            List<Button> buttons = LostLegaciesRelicHandler.getDiplomaticBoonPlanets(event, game, player);
+            if (buttons.isEmpty()) {
+                MessageHelper.sendMessageToChannel(
+                        event.getMessageChannel(),
+                        player.getRepresentationNoPing()
+                                + " has no eligible non-home planets, other than Mecatol Rex, for _Diplomatic Boon_.");
+                return;
+            }
+            player.addExhaustedRelic(relicID);
+            purgeOrExhaust = "exhausted";
+            MessageHelper.sendMessageToChannelWithButtons(
+                    event.getMessageChannel(),
+                    player.getRepresentationNoPing()
+                            + ", please choose a non-home planet, other than Mecatol Rex, for _Diplomatic Boon_.",
+                    buttons);
+        } else if ("ancient_radar".equalsIgnoreCase(relicID)) {
+            List<Button> buttons = LostLegaciesRelicHandler.getAncientRadarPlanets(event, game, player);
+            if (buttons.isEmpty()) {
+                MessageHelper.sendMessageToChannel(
+                        event.getMessageChannel(),
+                        player.getRepresentationNoPing() + " has no eligible planets for _Ancient Radar_.");
+                return;
+            }
+            player.addExhaustedRelic(relicID);
+            purgeOrExhaust = "exhausted";
+            String message = player.getRepresentationNoPing()
+                    + ", please choose a non-home planet for _Ancient Radar_ to explore once as each planet trait.";
+            String buttonPrefix = player.factionButtonChecker() + "exploreAncientRadar_";
+            MessageHelper.sendMessageToChannelWithButtons(
+                    event.getMessageChannel(), message, NewStuffHelper.buttonPagination(buttons, buttonPrefix, 0));
+
+        } else if ("horn_of_the_abyss".equalsIgnoreCase(relicID)) {
+            List<Button> buttons = LostLegaciesRelicHandler.getHornOfTheAbyssSystemButtons(game, player);
+            if (buttons.isEmpty()) {
+                MessageHelper.sendMessageToChannel(
+                        event.getMessageChannel(),
+                        player.getRepresentationNoPing() + " has no eligible system for _Horn of the Abyss_.");
+                return;
+            }
+            player.addExhaustedRelic(relicID);
+            purgeOrExhaust = "exhausted";
+            String message = player.getRepresentationNoPing()
+                    + ", please choose the system in which to place neutral ships with _Horn of the Abyss_.\n"
+                    + "-# You may place neutral ships with a combined cost of 4 or less.";
+            String buttonPrefix = player.factionButtonChecker() + "chooseHornOfTheAbyssSystem_";
+            MessageHelper.sendMessageToChannelWithButtons(
+                    event.getMessageChannel(), message, NewStuffHelper.buttonPagination(buttons, buttonPrefix, 0));
+
         } else { // PURGE THE RELIC
             player.removeRelic(relicID);
             player.removeExhaustedRelic(relicID);
@@ -1276,11 +1479,19 @@ public class ComponentActionHelper {
             }
             case "passturn" ->
                 MessageHelper.sendMessageToChannelWithButton(event.getChannel(), null, Buttons.REDISTRIBUTE_CCs);
-            case "titanprototype", "absol_jr", "circletofthevoid", "endurance_steroids", "the_incursion_gate" -> {
+            case "titanprototype",
+                    "absol_jr",
+                    "circletofthevoid",
+                    "endurance_steroids",
+                    "the_incursion_gate",
+                    "diplomaticboon",
+                    "ancient_radar",
+                    "horn_of_the_abyss" -> {
                 // handled above
             }
             case "bookoflatvinia" -> BookOfLatviniaService.purgeBookOfLatvinia(event, game, player);
             case "thesilverflame" -> SilverFlameService.rollSilverFlame(game, player);
+            case "quantum_entangler" -> QuantumEntanglerService.offerQuantumEntanglerTargets(event, game, player);
             default ->
                 MessageHelper.sendMessageToChannel(
                         event.getChannel(), "This relic is not tied to any automation. Please resolve manually.");
