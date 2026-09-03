@@ -6,10 +6,14 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.events.channel.ChannelCreateEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import org.apache.commons.lang3.function.Consumers;
 import org.jetbrains.annotations.NotNull;
 import ti4.discord.JdaService;
 import ti4.executors.ExecutorServiceManager;
+import ti4.helpers.TIGLHelper.TIGLRank;
+import ti4.logging.BotLogger;
 import ti4.service.game.CreateGameLaunchPostService;
+import ti4.service.game.TiglRankRequirementService;
 import ti4.spring.service.deploy.ActiveLeaseService;
 
 class ChannelCreationListener extends ListenerAdapter {
@@ -41,7 +45,21 @@ class ChannelCreationListener extends ListenerAdapter {
             Member owner = channel.getOwner();
             if (owner == null || owner.getUser().isBot()) return;
 
-            CreateGameLaunchPostService.postLaunchButtons(channel, List.of(owner), "");
+            TIGLRank minimumTiglRank =
+                    CreateGameLaunchPostService.MAKING_TIGL_GAMES_CHANNEL.equalsIgnoreCase(parentName)
+                            ? TiglRankRequirementService.detectFromPostTitle(channel.getName())
+                            : null;
+            if (minimumTiglRank == null) {
+                CreateGameLaunchPostService.postLaunchButtons(channel, List.of(owner), "");
+                return;
+            }
+            String detectedNote = "Detected a minimum TIGL rank of **"
+                    + TiglRankRequirementService.describe(minimumTiglRank)
+                    + "** from the post title, so players below it can't join through the buttons."
+                    + " Use **Set Min. TIGL Rank** to change or remove it.";
+            CreateGameLaunchPostService.postLaunchButtons(
+                    channel, List.of(owner), "", minimumTiglRank, launchPost -> channel.sendMessage(detectedNote)
+                            .queue(Consumers.nop(), BotLogger::catchRestError));
         } else if (FOW_MAKING_GAMES_CHANNEL.equalsIgnoreCase(parentName) && !hasTag(channel, FOW_REPLACEMENT_TAG)) {
             String message = """
                 To launch a new Fog of War game, please run the command `/fow create_fow_game_button`, \

@@ -13,6 +13,7 @@ import org.apache.commons.lang3.function.Consumers;
 import ti4.discord.interactions.buttons.Buttons;
 import ti4.discord.interactions.buttons.handlers.game.CreateGameButtonHandler;
 import ti4.helpers.ButtonHelper;
+import ti4.helpers.TIGLHelper.TIGLRank;
 import ti4.logging.BotLogger;
 
 @UtilityClass
@@ -26,6 +27,9 @@ public class CreateGameLaunchPostService {
     private static final String CREATE_GAME_FLOW_MESSAGE = """
         To launch a new game, please use the buttons. Players can add themselves or you can add them manually. Once all players are added, press the launch button.
         """;
+    private static final String TIGL_RANK_HINT = """
+        The poster can enforce a minimum TIGL rank with the **Set Min. TIGL Rank** button; players below it can't join through the buttons.
+        """;
 
     public static boolean isCreateGameLaunchParentName(String parentName) {
         return MAKING_NEW_GAMES_CHANNEL.equalsIgnoreCase(parentName)
@@ -35,26 +39,39 @@ public class CreateGameLaunchPostService {
     }
 
     public static void postLaunchButtons(ThreadChannel channel, List<Member> members, String gameFunName) {
-        postLaunchButtons(channel, members, gameFunName, Consumers.nop());
+        postLaunchButtons(channel, members, gameFunName, null, Consumers.nop());
     }
 
     public static void postLaunchButtons(
             ThreadChannel channel, List<Member> members, String gameFunName, Consumer<Message> onPosted) {
+        postLaunchButtons(channel, members, gameFunName, null, onPosted);
+    }
+
+    public static void postLaunchButtons(
+            ThreadChannel channel,
+            List<Member> members,
+            String gameFunName,
+            TIGLRank minimumTiglRank,
+            Consumer<Message> onPosted) {
         List<Button> buttons = new ArrayList<>();
         buttons.add(Buttons.green("joinGameList", "Join Game"));
         buttons.add(Buttons.red("leaveGameList", "Leave Game"));
         buttons.add(Buttons.gray("editPlayers~MDL", "Add Players"));
         buttons.add(Buttons.gray("removePlayers~MDL", "Remove Players"));
         String parentName = channel.getParentChannel().getName();
-        if (MAKING_NEW_GAMES_CHANNEL.equalsIgnoreCase(parentName)
-                || MAKING_TIGL_GAMES_CHANNEL.equalsIgnoreCase(parentName)) {
+        boolean tigl = MAKING_TIGL_GAMES_CHANNEL.equalsIgnoreCase(parentName);
+        if (MAKING_NEW_GAMES_CHANNEL.equalsIgnoreCase(parentName) || tigl) {
             buttons.add(Buttons.green("searchForPlayers~MDL", "Join Matchmaking"));
         }
         buttons.add(Buttons.blue("launchGame", "Launch Game"));
         buttons.add(Buttons.gray("addSillyName~MDL", "Add Fun Game Name"));
+        if (tigl) {
+            buttons.add(Buttons.gray("setMinTiglRank~MDL", "Set Min. TIGL Rank"));
+        }
 
-        String message =
-                CREATE_GAME_FLOW_MESSAGE + CreateGameButtonHandler.generateMemberListMessage(members, gameFunName);
+        String message = CREATE_GAME_FLOW_MESSAGE
+                + (tigl ? TIGL_RANK_HINT : "")
+                + CreateGameButtonHandler.generateMemberListMessage(members, gameFunName, minimumTiglRank);
         channel.sendMessage(message)
                 .addComponents(ButtonHelper.turnButtonListIntoActionRowList(buttons))
                 .queueAfter(2, TimeUnit.SECONDS, onPosted, BotLogger::catchRestError);

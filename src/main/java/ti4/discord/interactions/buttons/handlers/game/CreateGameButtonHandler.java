@@ -11,6 +11,8 @@ import lombok.experimental.UtilityClass;
 import net.dv8tion.jda.api.components.label.Label;
 import net.dv8tion.jda.api.components.selections.EntitySelectMenu;
 import net.dv8tion.jda.api.components.selections.EntitySelectMenu.SelectTarget;
+import net.dv8tion.jda.api.components.selections.SelectOption;
+import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.components.textinput.TextInput;
 import net.dv8tion.jda.api.components.textinput.TextInputStyle;
 import net.dv8tion.jda.api.entities.Guild;
@@ -20,6 +22,8 @@ import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
+import net.dv8tion.jda.api.interactions.Interaction;
+import net.dv8tion.jda.api.interactions.modals.ModalMapping;
 import net.dv8tion.jda.api.modals.Modal;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.function.Consumers;
@@ -31,9 +35,11 @@ import ti4.game.Game;
 import ti4.game.persistence.GameManager;
 import ti4.game.persistence.ManagedPlayer;
 import ti4.helpers.SearchGameHelper;
+import ti4.helpers.TIGLHelper.TIGLRank;
 import ti4.logging.BotLogger;
 import ti4.message.MessageHelper;
 import ti4.service.game.CreateGameService;
+import ti4.service.game.TiglRankRequirementService;
 import ti4.settings.users.UserSettingsManager;
 import ti4.spring.service.statistics.AverageTurnTimeService;
 import ti4.spring.service.statistics.UserGameInfoService;
@@ -81,7 +87,8 @@ public class CreateGameButtonHandler {
         List<String> blocked = new ArrayList<>();
         for (Member member : members) {
             if (membersOG.contains(member)) continue;
-            Optional<String> blocker = findQueueJoinBlocker(event.getChannelId(), member.getId(), membersOG);
+            Optional<String> blocker =
+                    findJoinBlocker(event.getMessage().getContentRaw(), event.getChannelId(), member, membersOG);
             if (blocker.isPresent()) {
                 blocked.add(member.getAsMention() + " can't join because " + blocker.get());
                 continue;
@@ -91,7 +98,7 @@ public class CreateGameButtonHandler {
             MessageHelper.sendMessageToEventChannel(event, member.getAsMention() + " joined the game.");
         }
         event.getMessage()
-                .editMessage(generateMemberListMessage(membersOG, fetchSillyNameFromMessage(event)))
+                .editMessage(regenerateLaunchMessage(event.getMessage().getContentRaw(), membersOG))
                 .queue();
         MatchmakingQueueSearchService.get().updateForRoster(event.getChannelId(), memberIds(membersOG));
         if (!blocked.isEmpty()) {
@@ -127,7 +134,7 @@ public class CreateGameButtonHandler {
             MessageHelper.sendMessageToEventChannel(event, member.getAsMention() + " was removed from the game.");
         }
         event.getMessage()
-                .editMessage(generateMemberListMessage(membersOG, fetchSillyNameFromMessage(event)))
+                .editMessage(regenerateLaunchMessage(event.getMessage().getContentRaw(), membersOG))
                 .queue();
         MatchmakingQueueSearchService.get().updateForRoster(event.getChannelId(), memberIds(membersOG));
     }
@@ -137,7 +144,7 @@ public class CreateGameButtonHandler {
         String sillyName = event.getValue("sillyName").getAsString();
         List<Member> membersOG = fetchMembersFromMessage(event);
         event.getMessage()
-                .editMessage(generateMemberListMessage(membersOG, sillyName))
+                .editMessage(generateMemberListMessage(membersOG, sillyName, fetchMinimumTiglRankFromMessage(event)))
                 .queue();
     }
 
@@ -153,6 +160,88 @@ public class CreateGameButtonHandler {
                 .addComponents(Label.of("Edit game name", summary))
                 .build();
         event.replyModal(modal).queue(Consumers.nop(), BotLogger::catchRestError);
+    }
+
+    private static final String MIN_TIGL_RANK_MODAL_ID = "setMinTiglRankModal";
+    private static final String MIN_TIGL_RANK_FIELD_ID = "minTiglRank";
+    private static final String NO_MIN_TIGL_RANK = "none";
+    private static final String MIN_TIGL_RANK_NOT_ALLOWED =
+            "Only the player who created this post, the first signed-up player, or staff can change the minimum TIGL rank.";
+
+    @ButtonHandler(value = "setMinTiglRank~MDL", save = false)
+    public static void setMinimumTiglRank(ButtonInteractionEvent event) {
+        if (!canSetMinimumTiglRank(event, event.getMessage())) {
+            event.reply(MIN_TIGL_RANK_NOT_ALLOWED).setEphemeral(true).queue(Consumers.nop(), BotLogger::catchRestError);
+            return;
+        }
+        TIGLRank current = fetchMinimumTiglRankFromMessage(event);
+        StringSelectMenu.Builder menu = StringSelectMenu.create(MIN_TIGL_RANK_FIELD_ID)
+                .setRequiredRange(1, 1)
+                .addOptions(SelectOption.of("No requirement", NO_MIN_TIGL_RANK));
+        for (TIGLRank rank : TiglRankRequirementService.selectableMinimumRanks()) {
+            menu.addOptions(SelectOption.of(TiglRankRequirementService.describe(rank), rank.toString()));
+        }
+        menu.setDefaultValues(List.of(current == null ? NO_MIN_TIGL_RANK : current.toString()));
+        Modal modal = Modal.create(MIN_TIGL_RANK_MODAL_ID, "Minimum TIGL Rank")
+                .addComponents(Label.of("Players below this rank can't join", menu.build()))
+                .build();
+        event.replyModal(modal).queue(Consumers.nop(), BotLogger::catchRestError);
+    }
+
+    @ModalHandler(MIN_TIGL_RANK_MODAL_ID)
+    public static void setMinimumTiglRankModal(ModalInteractionEvent event) {
+        if (!canSetMinimumTiglRank(event, event.getMessage())) {
+            event.getHook()
+                    .setEphemeral(true)
+                    .sendMessage(MIN_TIGL_RANK_NOT_ALLOWED)
+                    .queue(Consumers.nop(), BotLogger::catchRestError);
+            return;
+        }
+        ModalMapping mapping = event.getValue(MIN_TIGL_RANK_FIELD_ID);
+        String selected = mapping == null || mapping.getAsStringList().isEmpty()
+                ? NO_MIN_TIGL_RANK
+                : mapping.getAsStringList().getFirst();
+        TIGLRank minimumRank = NO_MIN_TIGL_RANK.equals(selected) ? null : TIGLRank.fromString(selected);
+
+        String content = event.getMessage().getContentRaw();
+        List<Member> members = fetchMembersFromMessage(event);
+        event.getMessage()
+                .editMessage(generateMemberListMessage(members, fetchSillyNameFromMessage(content), minimumRank))
+                .queue(Consumers.nop(), BotLogger::catchRestError);
+
+        String who = event.getUser().getEffectiveName();
+        if (minimumRank == null) {
+            MessageHelper.sendMessageToEventChannel(event, who + " removed the minimum TIGL rank requirement.");
+            return;
+        }
+        StringBuilder announcement = new StringBuilder(
+                who + " set the minimum TIGL rank to **" + TiglRankRequirementService.describe(minimumRank) + "**.");
+        List<String> below = members.stream()
+                .filter(member -> TiglRankRequirementService.findJoinBlocker(minimumRank, member.getUser())
+                        .isPresent())
+                .map(Member::getAsMention)
+                .toList();
+        if (!below.isEmpty()) {
+            announcement
+                    .append("\nAlready signed up but below this rank: ")
+                    .append(String.join(", ", below))
+                    .append(". Use **Remove Players** if they shouldn't stay.");
+        }
+        MessageHelper.sendMessageToEventChannel(event, announcement.toString());
+    }
+
+    /**
+     * The poster owns the requirement. Matchmade posts are owned by the bot, so the first signed-up player
+     * (who becomes the game owner at launch) may set it too, as may staff.
+     */
+    private static boolean canSetMinimumTiglRank(Interaction event, Message launchMessage) {
+        if (isStaff(event)) return true;
+        String userId = event.getUser().getId();
+        if (event.getChannel() instanceof ThreadChannel thread && userId.equals(thread.getOwnerId())) {
+            return true;
+        }
+        List<Member> members = fetchMembersFromMessage(launchMessage, event.getGuild());
+        return !members.isEmpty() && members.getFirst().getId().equals(userId);
     }
 
     @ButtonHandler(value = "removePlayers~MDL", save = false)
@@ -217,28 +306,70 @@ public class CreateGameButtonHandler {
         return fetchSillyNameFromMessage(event.getMessage().getContentRaw());
     }
 
+    private static TIGLRank fetchMinimumTiglRankFromMessage(String buttonMsg) {
+        return TiglRankRequirementService.parseFromLaunchMessage(buttonMsg);
+    }
+
+    private static TIGLRank fetchMinimumTiglRankFromMessage(ModalInteractionEvent event) {
+        return fetchMinimumTiglRankFromMessage(event.getMessage().getContentRaw());
+    }
+
+    private static TIGLRank fetchMinimumTiglRankFromMessage(ButtonInteractionEvent event) {
+        return fetchMinimumTiglRankFromMessage(event.getMessage().getContentRaw());
+    }
+
+    /** Re-renders the launch post for a changed roster, keeping the fun name and rank requirement it carries. */
+    private static String regenerateLaunchMessage(String buttonMsg, List<Member> members) {
+        return generateMemberListMessage(
+                members, fetchSillyNameFromMessage(buttonMsg), fetchMinimumTiglRankFromMessage(buttonMsg));
+    }
+
+    /** The post's own rank requirement is checked before any matchmaking queue criteria. */
+    private static Optional<String> findJoinBlocker(
+            String buttonMsg, String threadId, Member joining, List<Member> existingMembers) {
+        Optional<String> rankBlocker = TiglRankRequirementService.findJoinBlocker(
+                fetchMinimumTiglRankFromMessage(buttonMsg), joining.getUser());
+        if (rankBlocker.isPresent()) return rankBlocker;
+        return findQueueJoinBlocker(threadId, joining.getId(), existingMembers);
+    }
+
     public static String generateMemberListMessage(List<Member> members, String gameFunName) {
-        return generateMemberListMessage(members, gameFunName, true);
+        return generateMemberListMessage(members, gameFunName, null, true);
+    }
+
+    public static String generateMemberListMessage(List<Member> members, String gameFunName, TIGLRank minimumTiglRank) {
+        return generateMemberListMessage(members, gameFunName, minimumTiglRank, true);
     }
 
     public static String generateMemberListMessage(List<Member> members, String gameFunName, boolean ping) {
+        return generateMemberListMessage(members, gameFunName, null, ping);
+    }
+
+    public static String generateMemberListMessage(
+            List<Member> members, String gameFunName, TIGLRank minimumTiglRank, boolean ping) {
         StringBuilder memberList = new StringBuilder();
 
+        // The rank line sits directly under the heading so the parsers for the fun name (up to the
+        // first line break) and the players (user mentions) are unaffected by it.
+        String rankLine =
+                minimumTiglRank == null ? "" : TiglRankRequirementService.renderLaunchMessageLine(minimumTiglRank);
         if (gameFunName == null || gameFunName.isEmpty()) {
             if (ping) {
                 memberList.append("## Players Signed Up:\n");
             } else {
                 memberList.append("## Players:\n");
             }
+            memberList.append(rankLine);
         } else {
             if (ping) {
-                memberList
-                        .append("## Game Fun Name: ")
-                        .append(gameFunName.replace(":", ""))
-                        .append("\n\nPlayers Signed Up:");
+                memberList.append("## Game Fun Name: ").append(gameFunName.replace(":", ""));
             } else {
-                memberList.append(gameFunName.replace(":", "")).append("\n\nPlayers:");
+                memberList.append(gameFunName.replace(":", ""));
             }
+            if (!rankLine.isEmpty()) {
+                memberList.append('\n').append(rankLine);
+            }
+            memberList.append(ping ? "\n\nPlayers Signed Up:" : "\n\nPlayers:");
         }
 
         StringBuilder activityList = new StringBuilder();
@@ -304,8 +435,8 @@ public class CreateGameButtonHandler {
     public static void joinGameList(ButtonInteractionEvent event) {
         List<Member> members = fetchMembersFromMessage(event);
         if (!members.contains(event.getMember())) {
-            Optional<String> blocker =
-                    findQueueJoinBlocker(event.getChannelId(), event.getUser().getId(), members);
+            Optional<String> blocker = findJoinBlocker(
+                    event.getMessage().getContentRaw(), event.getChannelId(), event.getMember(), members);
             if (blocker.isPresent()) {
                 event.getHook()
                         .setEphemeral(true)
@@ -316,7 +447,7 @@ public class CreateGameButtonHandler {
             members.add(event.getMember());
         }
         event.getMessage()
-                .editMessage(generateMemberListMessage(members, fetchSillyNameFromMessage(event)))
+                .editMessage(regenerateLaunchMessage(event.getMessage().getContentRaw(), members))
                 .queue(Consumers.nop(), BotLogger::catchRestError);
         MessageHelper.sendMessageToEventChannel(event, event.getUser().getEffectiveName() + " joined the game.");
         MatchmakingQueueSearchService.get().updateForRoster(event.getChannelId(), memberIds(members));
@@ -350,7 +481,7 @@ public class CreateGameButtonHandler {
         }
         if (added.isEmpty()) return 0;
 
-        message.editMessage(generateMemberListMessage(members, fetchSillyNameFromMessage(content)))
+        message.editMessage(regenerateLaunchMessage(content, members))
                 .queue(Consumers.nop(), BotLogger::catchRestError);
         String mentions = added.stream().map(Member::getAsMention).collect(Collectors.joining(" & "));
         MessageHelper.sendMessageToChannel(
@@ -364,7 +495,7 @@ public class CreateGameButtonHandler {
         List<Member> members = fetchMembersFromMessage(event);
         members.remove(event.getMember());
         event.getMessage()
-                .editMessage(generateMemberListMessage(members, fetchSillyNameFromMessage(event)))
+                .editMessage(regenerateLaunchMessage(event.getMessage().getContentRaw(), members))
                 .queue(Consumers.nop(), BotLogger::catchRestError);
         MessageHelper.sendMessageToEventChannel(event, event.getUser().getEffectiveName() + " left the game.");
         MatchmakingQueueSearchService.get().updateForRoster(event.getChannelId(), memberIds(members));
@@ -489,7 +620,7 @@ public class CreateGameButtonHandler {
         return categoryChannel;
     }
 
-    private static boolean isStaff(ButtonInteractionEvent event) {
+    private static boolean isStaff(Interaction event) {
         return CommandHelper.hasRole(event, JdaService.bothelperRoles)
                 || CommandHelper.hasRole(event, JdaService.developerRoles);
     }

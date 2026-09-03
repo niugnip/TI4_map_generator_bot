@@ -103,7 +103,7 @@ public final class TIGLHelper {
             return StringUtils.substringAfter(name, "- ");
         }
 
-        Integer getIndex() {
+        public Integer getIndex() {
             return index;
         }
 
@@ -123,6 +123,10 @@ public final class TIGLHelper {
         boolean belongsToLadder(boolean isFractured) {
             TIGLLadder ladder = isFractured ? TIGLLadder.FRACTURED : TIGLLadder.STANDARD;
             return ladders.contains(ladder);
+        }
+
+        public boolean isFracturedLadder() {
+            return ladders.contains(TIGLLadder.FRACTURED);
         }
 
         TIGLRank getNextRank() {
@@ -318,7 +322,8 @@ public final class TIGLHelper {
         return getUsersHighestTIGLRank(user, false);
     }
 
-    private static TIGLRank getUsersHighestTIGLRank(User user, boolean isFractured) {
+    /** The user's highest rank on one ladder, {@link TIGLRank#UNRANKED} when they hold no rank role on it. */
+    public static TIGLRank getUsersHighestTIGLRank(User user, boolean isFractured) {
         List<TIGLRank> ranks = getUsersTIGLRanks(user, isFractured);
         if (ranks.isEmpty()) {
             return TIGLRank.UNRANKED;

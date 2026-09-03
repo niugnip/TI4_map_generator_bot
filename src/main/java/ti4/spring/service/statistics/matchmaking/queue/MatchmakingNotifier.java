@@ -23,6 +23,7 @@ import ti4.logging.BotLogger;
 import ti4.message.MessageHelper;
 import ti4.service.game.CreateGameLaunchPostService;
 import ti4.service.game.CreateGameService;
+import ti4.service.game.TiglRankRequirementService;
 import ti4.settings.users.UserSettings;
 
 @UtilityClass
@@ -104,8 +105,14 @@ class MatchmakingNotifier {
                                     }
                                     postLfgPing(thread, game);
                                 };
+                                // Players qualify for a matchmade TIGL game at the lowest queued rank, so the launch
+                                // post keeps enforcing that even after the queue search for it is gone.
                                 CreateGameLaunchPostService.postLaunchButtons(
-                                        thread, members, gameFunName, onLaunchPosted);
+                                        thread,
+                                        members,
+                                        gameFunName,
+                                        TiglRankRequirementService.lowestOf(game.tiglRanks()),
+                                        onLaunchPosted);
                             },
                             BotLogger::catchRestError);
         }
